@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Результат расчёта</title>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background: linear-gradient(135deg,#667eea,#764ba2);
+            padding: 30px;
+            min-height: 100vh;
+        }
+
+        .container {
+            background:white;
+            padding:30px;
+            border-radius:20px;
+            max-width:1200px;
+            margin:auto;
+            box-shadow:0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        h1 { margin:0 0 10px 0; color:#222; }
+        .sub { color:#666; margin-bottom:20px; }
+
+        .banner {
+            padding:12px 14px;
+            border-radius:12px;
+            margin: 12px 0 18px 0;
+            font-weight:700;
+            display:flex;
+            justify-content:space-between;
+            flex-wrap:wrap;
+            gap:10px;
+            align-items:center;
+        }
+        .ok { background:#e8f5e9; border:1px solid #c8e6c9; color:#1b5e20; }
+        .bad { background:#ffebee; border:1px solid #ffcdd2; color:#b71c1c; }
+
+        .grid {
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+            gap:12px;
+            margin-top:10px;
+        }
+
+        .card {
+            border:1px solid #e5e5e5;
+            border-radius:14px;
+            padding:14px 14px;
+            background:#fff;
+            box-shadow:0 4px 14px rgba(0,0,0,0.06);
+        }
+        .label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.5px; }
+        .value { font-size:22px; font-weight:800; margin-top:6px; color:#222; }
+        .unit  { font-size:12px; color:#888; margin-top:4px; }
+
+        .svg-wrap {
+            margin-top:22px;
+            background:linear-gradient(135deg,#f5f7fa,#e9ecef);
+            border-radius:16px;
+            padding:16px;
+            box-shadow:0 10px 30px rgba(0,0,0,0.12);
+        }
+
+        .svg-container {
+            background:white;
+            border:3px solid #4CAF50;
+            border-radius:14px;
+            padding:10px;
+            max-height:650px;
+            overflow:auto;
+        }
+
+        .buttons {
+            margin-top:18px;
+            display:flex;
+            gap:14px;
+            flex-wrap:wrap;
+        }
+
+        .btn {
+            padding:12px 18px;
+            border:none;
+            border-radius:10px;
+            font-weight:800;
+            cursor:pointer;
+            color:white;
+            display:inline-flex;
+            gap:8px;
+            align-items:center;
+            box-shadow:0 8px 18px rgba(0,0,0,0.18);
+            text-decoration:none;
+        }
+        .btn:hover { transform: translateY(-1px); }
+
+        .btn-svg { background: linear-gradient(135deg,#1976D2,#0D47A1); }
+        .btn-dxf { background: linear-gradient(135deg,#FF9800,#E65100); }
+        .btn-pdf { background: linear-gradient(135deg,#9C27B0,#6A1B9A); }
+        .btn-back{ background: linear-gradient(135deg,#607D8B,#37474F); }
+
+        .small {
+            font-size:12px;
+            color:#777;
+            margin-top:10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Результат инженерного расчёта (MANUAL)</h1>
+    <div class="sub">Режим: вручную заданные параметры сот (a / gap) → расчёт фактической мощности и отклонения.</div>
+
+    <div th:class="${T(java.lang.Math).abs(result.powerDeviationPercent) <= 10} ? 'banner ok' : 'banner bad'">
+        <div>
+            Отклонение от цели:
+            <span th:text="${#numbers.formatDecimal(result.powerDeviationPercent,1,1)}"></span> %
+        </div>
+        <div>
+            Цель: <span th:text="${#numbers.formatDecimal(result.targetPower,1,0)}"></span> Вт/м² →
+            Факт: <span th:text="${#numbers.formatDecimal(result.achievedPowerWm2,1,1)}"></span> Вт/м²
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="label">Размер стекла</div>
+            <div class="value">
+                <span th:text="${#numbers.formatDecimal(result.width,1,0)}"></span> ×
+                <span th:text="${#numbers.formatDecimal(result.height,1,0)}"></span>
+            </div>
+            <div class="unit">мм</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Плоскостное сопротивление</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.sheetResistance,1,2)}"></div>
+            <div class="unit">Ом/□</div>
+        </div>
+
+        <div class="card">
+            <div class="label">R_target (нужное)</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.totalResistance,1,2)}"></div>
+            <div class="unit">Ом</div>
+        </div>
+
+        <div class="card">
+            <div class="label">R_raw (без рисунка)</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.rawResistance,1,2)}"></div>
+            <div class="unit">Ом</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Multiplier (фактический)</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.pathLengthMultiplier,1,2)}"></div>
+            <div class="unit">раз</div>
+        </div>
+
+        <div class="card">
+            <div class="label">R_achieved (достигнуто)</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.achievedResistance,1,2)}"></div>
+            <div class="unit">Ом</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Сота: сторона a</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.hexSide,1,1)}"></div>
+            <div class="unit">мм</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Сота: зазор gap</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.hexGap,1,1)}"></div>
+            <div class="unit">мм</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Отступ от края</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.edgeOffset,1,1)}"></div>
+            <div class="unit">мм</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Ширина шины</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.busbarWidth,1,1)}"></div>
+            <div class="unit">мм</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Ориентация шин</div>
+            <div class="value"
+                 th:text="${result.busbarOrientation == 2} ? 'Слева/справа' : 'Сверху/снизу'">
+                Сверху/снизу
+            </div>
+            <div class="unit">&nbsp;</div>
+        </div>
+    </div>
+
+    <div class="svg-wrap">
+        <h2 style="margin:0 0 12px 0;">Предпросмотр рисунка (SVG)</h2>
+        <div class="svg-container" th:utext="${svg}">
+            SVG предпросмотр будет здесь
+        </div>
+        <div class="small">
+            * SVG — только визуализация. DXF используйте для производства.
+        </div>
+    </div>
+
+    <div class="buttons">
+
+        <!-- Скачать SVG -->
+        <form action="/download/svg" method="post">
+            <input type="hidden" name="width" th:value="${result.width}">
+            <input type="hidden" name="height" th:value="${result.height}">
+            <input type="hidden" name="targetPower" th:value="${result.targetPower}">
+            <input type="hidden" name="sheetResistance" th:value="${result.sheetResistance}">
+            <input type="hidden" name="edgeOffset" th:value="${result.edgeOffset}">
+            <input type="hidden" name="busbarWidth" th:value="${result.busbarWidth}">
+            <input type="hidden" name="busbarOrientation" th:value="${result.busbarOrientation}">
+            <input type="hidden" name="patternType" value="2">
+            <input type="hidden" name="hexSide" th:value="${result.hexSide}">
+            <input type="hidden" name="hexGap" th:value="${result.hexGap}">
+            <button type="submit" class="btn btn-svg">📊 Скачать SVG</button>
+        </form>
+
+        <!-- Скачать DXF -->
+        <form action="/download/dxf" method="post">
+            <input type="hidden" name="width" th:value="${result.width}">
+            <input type="hidden" name="height" th:value="${result.height}">
+            <input type="hidden" name="targetPower" th:value="${result.targetPower}">
+            <input type="hidden" name="sheetResistance" th:value="${result.sheetResistance}">
+            <input type="hidden" name="edgeOffset" th:value="${result.edgeOffset}">
+            <input type="hidden" name="busbarWidth" th:value="${result.busbarWidth}">
+            <input type="hidden" name="busbarOrientation" th:value="${result.busbarOrientation}">
+            <input type="hidden" name="patternType" value="2">
+            <input type="hidden" name="hexSide" th:value="${result.hexSide}">
+            <input type="hidden" name="hexGap" th:value="${result.hexGap}">
+            <button type="submit" class="btn btn-dxf">⚙️ Скачать DXF</button>
+        </form>
+
+        <!-- PDF отчёт -->
+        <form action="/report/pdf" method="post">
+            <input type="hidden" name="width" th:value="${result.width}">
+            <input type="hidden" name="height" th:value="${result.height}">
+            <input type="hidden" name="targetPower" th:value="${result.targetPower}">
+            <input type="hidden" name="sheetResistance" th:value="${result.sheetResistance}">
+            <input type="hidden" name="edgeOffset" th:value="${result.edgeOffset}">
+            <input type="hidden" name="busbarWidth" th:value="${result.busbarWidth}">
+            <input type="hidden" name="busbarOrientation" th:value="${result.busbarOrientation}">
+            <input type="hidden" name="patternType" value="2">
+            <input type="hidden" name="hexSide" th:value="${result.hexSide}">
+            <input type="hidden" name="hexGap" th:value="${result.hexGap}">
+            <button type="submit" class="btn btn-pdf">🧾 Скачать PDF отчёт</button>
+        </form>
+
+        <a class="btn btn-back" href="/">← Новый расчёт</a>
+    </div>
+</div>
+
+</body>
+</html>
