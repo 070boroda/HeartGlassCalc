@@ -5,16 +5,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
- * Генерация SVG-чертежа:
+ * SVG-чертёж:
  * - рамка стекла, зона отступа, шины;
  * - либо зигзаг, либо решётка сот.
  *
- * ВАЖНО: соты клиппятся по рабочей области (safe-zone минус шины),
- * чтобы у края получались ЗАКРЫТЫЕ обрезанные контуры.
+ * ВАЖНО (для сот):
+ * - сетка строится "с запасом" и покрывает всю зону
+ * - соты у границ/шин НЕ отбрасываются, а ПОДРЕЗАЮТСЯ клиппингом по прямоугольнику
+ * - результат всегда "закрытый контур" (полигон), как на твоём рисунке
  */
 @Service
 @Slf4j
@@ -26,16 +27,14 @@ public class SvgGeneratorService {
             return "";
         }
         if (params.isHoneycomb()) {
-            log.info("SVG: режим сот (honeycomb)");
             return generateHoneycombSvg(params);
         } else {
-            log.info("SVG: режим зигзаг");
             return generateZigzagSvg(params);
         }
     }
 
     // ========================================================================
-    // ЗИГЗАГ
+    // ЗИГЗАГ (оставил как было)
     // ========================================================================
 
     private String generateZigzagSvg(GlassParameters params) {
@@ -49,15 +48,9 @@ public class SvgGeneratorService {
 
         double padding = 50.0;
 
-        log.debug("SVG зигзаг: width={} height={} offset={} lines={} spacing={} orientation={}",
-                width, height, offset, lineCount, spacing,
-                verticalBusbars ? "верх/низ" : "лево/право");
-
         StringBuilder svg = new StringBuilder();
-
         svg.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" ")
-                .append("xmlns:xlink=\"http://www.w3.org/1999/xlink\" ")
                 .append("width=\"").append(width + 2 * padding).append("mm\" ")
                 .append("height=\"").append(height + 2 * padding).append("mm\" ")
                 .append("viewBox=\"")
@@ -66,30 +59,25 @@ public class SvgGeneratorService {
                 .append(width + 2 * padding).append(" ")
                 .append(height + 2 * padding).append("\">\n");
 
-        // фон
         svg.append("  <rect x=\"").append(-padding).append("\" y=\"").append(-padding)
                 .append("\" width=\"").append(width + 2 * padding)
                 .append("\" height=\"").append(height + 2 * padding)
                 .append("\" fill=\"#f0f4ff\" />\n");
 
-        // стекло
         svg.append("  <rect x=\"0\" y=\"0\" width=\"").append(width)
                 .append("\" height=\"").append(height)
                 .append("\" fill=\"#ffffff\" stroke=\"none\" />\n");
 
-        // тень
         svg.append("  <defs>\n");
         svg.append("    <filter id=\"glassShadow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\n");
         svg.append("      <feDropShadow dx=\"4\" dy=\"4\" stdDeviation=\"4\" flood-color=\"#999\" flood-opacity=\"0.5\" />\n");
         svg.append("    </filter>\n");
         svg.append("  </defs>\n");
 
-        // рамка
         svg.append("  <rect x=\"0\" y=\"0\" width=\"").append(width)
                 .append("\" height=\"").append(height)
                 .append("\" fill=\"none\" stroke=\"#000000\" stroke-width=\"3\" filter=\"url(#glassShadow)\" />\n");
 
-        // зона отступа (красный пунктир)
         if (offset > 0 && width > 2 * offset && height > 2 * offset) {
             svg.append("  <rect x=\"").append(offset)
                     .append("\" y=\"").append(offset)
@@ -98,14 +86,12 @@ public class SvgGeneratorService {
                     .append("\" fill=\"none\" stroke=\"#ff0000\" stroke-width=\"2\" stroke-dasharray=\"10,6\" />\n");
         }
 
-        // шины
         if (verticalBusbars) {
             drawHorizontalBusbars(svg, width, height, offset, busbarWidth);
         } else {
             drawVerticalBusbars(svg, width, height, offset, busbarWidth);
         }
 
-        // линии абляции
         if (lineCount > 0 && spacing > 0) {
             if (verticalBusbars) {
                 double safeTop = offset + busbarWidth;
@@ -135,7 +121,7 @@ public class SvgGeneratorService {
     }
 
     // ========================================================================
-    // СОТЫ (с клиппингом)
+    // СОТЫ (подрезка по зоне между шинами + закрытые контуры)
     // ========================================================================
 
     private String generateHoneycombSvg(GlassParameters params) {
@@ -145,42 +131,52 @@ public class SvgGeneratorService {
         double busbarWidth = params.getBusbarWidth();
         boolean verticalBusbars = params.isVerticalBusbars();
 
-        double a = params.getHexSide();
+        double a = params.getHexSide() != null ? params.getHexSide() : 30.0;
         double gap = params.getHexGap() != null ? params.getHexGap() : 2.0;
+
+        // Зазор от шин: если не задан — используем gap (обычно логично)
+        double clearance = (params.getBusbarClearanceMm() != null && params.getBusbarClearanceMm() >= 0)
+                ? params.getBusbarClearanceMm()
+                : gap;
 
         double padding = 50.0;
 
+        // Геометрия сот
         double hexHeight = Math.sqrt(3.0) * a;
         double stepX = 1.5 * a + gap;
         double stepY = hexHeight + gap;
 
-        // Рабочая область (safe-zone минус шины)
-        ClipRect clip = computeWorkingClipRect(width, height, offset, busbarWidth, verticalBusbars);
-        if (!clip.isValid()) {
-            log.warn("SVG соты: рабочая область некорректна, вернём пустую сетку");
+        // Безопасные границы по стеклу (красная зона отступа)
+        double safeLeft = offset;
+        double safeRight = width - offset;
+        double safeTop = offset;
+        double safeBottom = height - offset;
+
+        // Допустимая зона для сот: "между шинами", но НЕ вплотную — с clearance
+        double clipMinX, clipMaxX, clipMinY, clipMaxY;
+        if (verticalBusbars) {
+            // шины сверху/снизу, соты между ними
+            clipMinX = safeLeft;
+            clipMaxX = safeRight;
+            clipMinY = safeTop + busbarWidth + clearance;
+            clipMaxY = safeBottom - busbarWidth - clearance;
+        } else {
+            // шины слева/справа, соты между ними
+            clipMinX = safeLeft + busbarWidth + clearance;
+            clipMaxX = safeRight - busbarWidth - clearance;
+            clipMinY = safeTop;
+            clipMaxY = safeBottom;
         }
 
-// Считаем, сколько колонок/рядов нужно, чтобы ПОЛНОСТЬЮ перекрыть clip-область,
-// плюс запас, чтобы клипнутые соты у границ гарантированно появились.
-        double clipW = clip.xMax - clip.xMin;
-        double clipH = clip.yMax - clip.yMin;
-
-// +6 — это запас в шагах (можно 4..8, 6 даёт стабильное перекрытие)
-        int cols = (int) Math.ceil(clipW / stepX) + 6;
-        int rows = (int) Math.ceil(clipH / stepY) + 6;
-
-
-
-
-        log.debug("SVG соты: width={} height={} offset={} a={} gap={} cols={} rows={} clip={} orientation={}",
-                width, height, offset, a, gap, cols, rows, clip,
-                verticalBusbars ? "верх/низ" : "лево/право");
+        // если зона выродилась — рисуем только рамку/шины
+        if (clipMaxX <= clipMinX || clipMaxY <= clipMinY) {
+            log.warn("SVG соты: рабочая зона выродилась (clearance={} мм).", clearance);
+            return baseSvgOnly(width, height, offset, busbarWidth, verticalBusbars, padding);
+        }
 
         StringBuilder svg = new StringBuilder();
-
         svg.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" ")
-                .append("xmlns:xlink=\"http://www.w3.org/1999/xlink\" ")
                 .append("width=\"").append(width + 2 * padding).append("mm\" ")
                 .append("height=\"").append(height + 2 * padding).append("mm\" ")
                 .append("viewBox=\"")
@@ -200,7 +196,7 @@ public class SvgGeneratorService {
                 .append("\" height=\"").append(height)
                 .append("\" fill=\"#ffffff\" stroke=\"none\" />\n");
 
-        // тень и рамка
+        // тень+рамка
         svg.append("  <defs>\n");
         svg.append("    <filter id=\"glassShadow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\n");
         svg.append("      <feDropShadow dx=\"4\" dy=\"4\" stdDeviation=\"4\" flood-color=\"#999\" flood-opacity=\"0.5\" />\n");
@@ -211,7 +207,7 @@ public class SvgGeneratorService {
                 .append("\" height=\"").append(height)
                 .append("\" fill=\"none\" stroke=\"#000000\" stroke-width=\"3\" filter=\"url(#glassShadow)\" />\n");
 
-        // зона отступа
+        // зона отступа (красный пунктир)
         if (offset > 0 && width > 2 * offset && height > 2 * offset) {
             svg.append("  <rect x=\"").append(offset)
                     .append("\" y=\"").append(offset)
@@ -227,53 +223,106 @@ public class SvgGeneratorService {
             drawVerticalBusbars(svg, width, height, offset, busbarWidth);
         }
 
-// Стартуем левее/выше clip-области на несколько шагов,
-// чтобы первые соты тоже клипнулись и дали закрытые контуры у краёв.
-        double startX = clip.xMin - 3 * stepX;
-        double startY = clip.yMin - 3 * stepY + (hexHeight / 2.0);
+        // Рисуем соты как закрытые полигоны после клиппинга
+        svg.append("  <g stroke=\"#c0d2e8\" stroke-width=\"1.2\" fill=\"none\" opacity=\"0.85\">\n");
 
-        svg.append("  <g stroke=\"#c0d2e8\" stroke-width=\"1.2\" fill=\"none\" opacity=\"0.75\">\n");
+        // ---- Сетка "с запасом" ----
+        // Берём диапазоны col/row так, чтобы покрыть clip-область + небольшой запас
+        // Стартуем примерно слева "до зоны", чтобы не было пустой полосы.
+        int colMin = (int) Math.floor((clipMinX - 2 * a) / stepX) - 2;
+        int colMax = (int) Math.ceil((clipMaxX + 2 * a) / stepX) + 2;
+
+        // По Y сложнее из-за шахматного смещения, но берём широкий диапазон
+        int rowMin = (int) Math.floor((clipMinY - 2 * hexHeight) / stepY) - 3;
+        int rowMax = (int) Math.ceil((clipMaxY + 2 * hexHeight) / stepY) + 3;
 
         int drawn = 0;
-        int clippedDrawn = 0;
+        int clippedCount = 0;
 
-        for (int col = 0; col < cols; col++) {
-            double cxBase = startX + col * stepX;
+        for (int col = colMin; col <= colMax; col++) {
+            double cxBase = (col * stepX);
+
+            // чтобы сетка сидела "красиво" внутри стекла, добавим привязку к safeLeft
+            cxBase += safeLeft + a;
+
             double colOffsetY = (col % 2 == 0) ? 0 : (stepY / 2.0);
 
-            for (int row = 0; row < rows; row++) {
-                double cy = startY + row * stepY + colOffsetY;
+            for (int row = rowMin; row <= rowMax; row++) {
+                double cy = safeTop + (hexHeight / 2.0) + (row * stepY) + colOffsetY;
 
-                // быстрый reject по bbox шестиугольника (чтобы не клиппить лишнее)
-                double minX = cxBase - a;
-                double maxX = cxBase + a;
-                double minY = cy - hexHeight / 2.0;
-                double maxY = cy + hexHeight / 2.0;
-                if (maxX < clip.xMin || minX > clip.xMax || maxY < clip.yMin || minY > clip.yMax) {
+                // Быстрый отбор по bbox до клиппинга (чтобы не клиппить лишнее)
+                if (cxBase + a < clipMinX - 1) continue;
+                if (cxBase - a > clipMaxX + 1) continue;
+                if (cy + hexHeight / 2.0 < clipMinY - 1) continue;
+                if (cy - hexHeight / 2.0 > clipMaxY + 1) continue;
+
+                List<Point> hex = buildHexagon(cxBase, cy, a);
+                List<Point> clipped = clipPolygonToRect(hex, clipMinX, clipMaxX, clipMinY, clipMaxY);
+
+                if (clipped.size() < 3) {
                     continue;
                 }
 
-                List<Point> hex = buildFlatTopHex(cxBase, cy, a);
-                List<Point> poly = clipPolygonToRect(hex, clip);
+                if (clipped.size() != hex.size()) clippedCount++;
 
-                if (poly.size() >= 3) {
-                    svg.append("    <path d=\"").append(toSvgPathClosed(poly)).append("\" />\n");
-                    drawn++;
-                    if (poly.size() != 6) clippedDrawn++;
-                }
+                appendPolygon(svg, clipped);
+                drawn++;
             }
         }
 
         svg.append("  </g>\n");
         svg.append("</svg>");
 
-        log.info("SVG соты: отрисовано {} контуров, из них обрезанных (клип) {}", drawn, clippedDrawn);
+        log.info("SVG соты: контуров={} (подрезанных={}), a={} gap={} clearance={} ориентация={}",
+                drawn, clippedCount, a, gap, clearance, verticalBusbars ? "верх/низ" : "лево/право");
+
         return svg.toString();
     }
 
     // ========================================================================
-    // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ SVG
+    // Helpers
     // ========================================================================
+
+    private String baseSvgOnly(double width, double height, double offset,
+                               double busbarWidth, boolean verticalBusbars, double padding) {
+        StringBuilder svg = new StringBuilder();
+        svg.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" ")
+                .append("width=\"").append(width + 2 * padding).append("mm\" ")
+                .append("height=\"").append(height + 2 * padding).append("mm\" ")
+                .append("viewBox=\"")
+                .append(-padding).append(" ")
+                .append(-padding).append(" ")
+                .append(width + 2 * padding).append(" ")
+                .append(height + 2 * padding).append("\">\n");
+
+        svg.append("  <rect x=\"").append(-padding).append("\" y=\"").append(-padding)
+                .append("\" width=\"").append(width + 2 * padding)
+                .append("\" height=\"").append(height + 2 * padding)
+                .append("\" fill=\"#e9f3ff\" />\n");
+
+        svg.append("  <rect x=\"0\" y=\"0\" width=\"").append(width)
+                .append("\" height=\"").append(height)
+                .append("\" fill=\"#ffffff\" stroke=\"none\" />\n");
+
+        svg.append("  <rect x=\"0\" y=\"0\" width=\"").append(width)
+                .append("\" height=\"").append(height)
+                .append("\" fill=\"none\" stroke=\"#000\" stroke-width=\"3\" />\n");
+
+        if (offset > 0 && width > 2 * offset && height > 2 * offset) {
+            svg.append("  <rect x=\"").append(offset)
+                    .append("\" y=\"").append(offset)
+                    .append("\" width=\"").append(width - 2 * offset)
+                    .append("\" height=\"").append(height - 2 * offset)
+                    .append("\" fill=\"none\" stroke=\"#ff0000\" stroke-width=\"2\" stroke-dasharray=\"10,6\" />\n");
+        }
+
+        if (verticalBusbars) drawHorizontalBusbars(svg, width, height, offset, busbarWidth);
+        else drawVerticalBusbars(svg, width, height, offset, busbarWidth);
+
+        svg.append("</svg>");
+        return svg.toString();
+    }
 
     private void drawHorizontalBusbars(StringBuilder svg,
                                        double width,
@@ -283,14 +332,12 @@ public class SvgGeneratorService {
         double safeTop = offset;
         double safeBottom = height - offset;
 
-        // верхняя шина
         svg.append("  <rect x=\"").append(offset)
                 .append("\" y=\"").append(safeTop)
                 .append("\" width=\"").append(width - 2 * offset)
                 .append("\" height=\"").append(busbarWidth)
                 .append("\" fill=\"#c0c0c0\" stroke=\"#808080\" stroke-width=\"1\" />\n");
 
-        // нижняя шина
         svg.append("  <rect x=\"").append(offset)
                 .append("\" y=\"").append(safeBottom - busbarWidth)
                 .append("\" width=\"").append(width - 2 * offset)
@@ -306,14 +353,12 @@ public class SvgGeneratorService {
         double safeTop = offset;
         double safeBottom = height - offset;
 
-        // левая шина
         svg.append("  <rect x=\"").append(offset)
                 .append("\" y=\"").append(safeTop)
                 .append("\" width=\"").append(busbarWidth)
                 .append("\" height=\"").append(safeBottom - safeTop)
                 .append("\" fill=\"#c0c0c0\" stroke=\"#808080\" stroke-width=\"1\" />\n");
 
-        // правая шина
         svg.append("  <rect x=\"").append(width - offset - busbarWidth)
                 .append("\" y=\"").append(safeTop)
                 .append("\" width=\"").append(busbarWidth)
@@ -321,60 +366,24 @@ public class SvgGeneratorService {
                 .append("\" fill=\"#c0c0c0\" stroke=\"#808080\" stroke-width=\"1\" />\n");
     }
 
-    // ========================================================================
-    // КЛИППИНГ ПОЛИГОНОВ ПО ПРЯМОУГОЛЬНИКУ (Sutherland–Hodgman)
-    // ========================================================================
-
-    private static final class Point {
-        final double x;
-        final double y;
-
-        Point(double x, double y) {
-            this.x = x;
-            this.y = y;
+    // ---------- Polygon drawing ----------
+    private void appendPolygon(StringBuilder svg, List<Point> poly) {
+        svg.append("    <path d=\"");
+        svg.append("M ").append(fmt(poly.get(0).x)).append(" ").append(fmt(poly.get(0).y)).append(" ");
+        for (int i = 1; i < poly.size(); i++) {
+            svg.append("L ").append(fmt(poly.get(i).x)).append(" ").append(fmt(poly.get(i).y)).append(" ");
         }
+        svg.append("Z\" />\n");
     }
 
-    private static final class ClipRect {
-        final double xMin, yMin, xMax, yMax;
-
-        ClipRect(double xMin, double yMin, double xMax, double yMax) {
-            this.xMin = xMin;
-            this.yMin = yMin;
-            this.xMax = xMax;
-            this.yMax = yMax;
-        }
-
-        boolean isValid() {
-            return xMax > xMin && yMax > yMin;
-        }
-
-        @Override
-        public String toString() {
-            return "Rect[xMin=" + xMin + ",yMin=" + yMin + ",xMax=" + xMax + ",yMax=" + yMax + "]";
-        }
+    private String fmt(double v) {
+        // компактный вывод
+        return String.format(java.util.Locale.US, "%.3f", v);
     }
 
-    private ClipRect computeWorkingClipRect(double width, double height, double offset, double busbarWidth, boolean verticalBusbars) {
-        double xMin, xMax, yMin, yMax;
-        if (verticalBusbars) {
-            // шины сверху/снизу -> ограничиваем по Y
-            xMin = offset;
-            xMax = width - offset;
-            yMin = offset + busbarWidth;
-            yMax = height - offset - busbarWidth;
-        } else {
-            // шины слева/справа -> ограничиваем по X
-            xMin = offset + busbarWidth;
-            xMax = width - offset - busbarWidth;
-            yMin = offset;
-            yMax = height - offset;
-        }
-        return new ClipRect(xMin, yMin, xMax, yMax);
-    }
-
-    // Плоско-верхний шестиугольник (flat-top), как в твоём исходном коде
-    private List<Point> buildFlatTopHex(double cx, double cy, double a) {
+    // ---------- Hexagon vertices ----------
+    private List<Point> buildHexagon(double cx, double cy, double a) {
+        // "плоская вершина" (flat-top) как в твоём текущем коде
         double r = a;
         double h = Math.sqrt(3.0) * a / 2.0;
 
@@ -385,120 +394,76 @@ public class SvgGeneratorService {
         double yTop = cy - h;
         double yBottom = cy + h;
 
-        List<Point> pts = new ArrayList<>(6);
-        pts.add(new Point(x0, yTop));
-        pts.add(new Point(x1, yTop));
-        pts.add(new Point(xRight, cy));
-        pts.add(new Point(x1, yBottom));
-        pts.add(new Point(x0, yBottom));
-        pts.add(new Point(xLeft, cy));
-        return pts;
+        List<Point> p = new ArrayList<>(6);
+        p.add(new Point(x0, yTop));
+        p.add(new Point(x1, yTop));
+        p.add(new Point(xRight, cy));
+        p.add(new Point(x1, yBottom));
+        p.add(new Point(x0, yBottom));
+        p.add(new Point(xLeft, cy));
+        return p;
     }
 
-    private List<Point> clipPolygonToRect(List<Point> subject, ClipRect r) {
-        if (subject == null || subject.size() < 3) return Collections.emptyList();
-        if (!r.isValid()) return Collections.emptyList();
-
+    // ---------- Sutherland–Hodgman clip to rectangle ----------
+    private List<Point> clipPolygonToRect(List<Point> subject, double minX, double maxX, double minY, double maxY) {
         List<Point> out = subject;
-
-        // left: x >= xMin
-        out = clipAgainstVertical(out, r.xMin, true);
-        if (out.size() < 3) return Collections.emptyList();
-
-        // right: x <= xMax
-        out = clipAgainstVertical(out, r.xMax, false);
-        if (out.size() < 3) return Collections.emptyList();
-
-        // top: y >= yMin
-        out = clipAgainstHorizontal(out, r.yMin, true);
-        if (out.size() < 3) return Collections.emptyList();
-
-        // bottom: y <= yMax
-        out = clipAgainstHorizontal(out, r.yMax, false);
-        if (out.size() < 3) return Collections.emptyList();
-
+        out = clipAgainstEdge(out, p -> p.x >= minX, (a, b) -> intersectX(minX, a, b));
+        if (out.isEmpty()) return out;
+        out = clipAgainstEdge(out, p -> p.x <= maxX, (a, b) -> intersectX(maxX, a, b));
+        if (out.isEmpty()) return out;
+        out = clipAgainstEdge(out, p -> p.y >= minY, (a, b) -> intersectY(minY, a, b));
+        if (out.isEmpty()) return out;
+        out = clipAgainstEdge(out, p -> p.y <= maxY, (a, b) -> intersectY(maxY, a, b));
         return out;
     }
 
-    private List<Point> clipAgainstVertical(List<Point> in, double xEdge, boolean keepGreater) {
-        if (in.size() < 3) return Collections.emptyList();
-        List<Point> out = new ArrayList<>();
+    private interface InsideTest { boolean inside(Point p); }
+    private interface Intersector { Point intersect(Point a, Point b); }
 
-        Point prev = in.get(in.size() - 1);
-        boolean prevInside = keepGreater ? (prev.x >= xEdge) : (prev.x <= xEdge);
+    private List<Point> clipAgainstEdge(List<Point> input, InsideTest inside, Intersector intersector) {
+        List<Point> output = new ArrayList<>();
+        if (input.isEmpty()) return output;
 
-        for (Point curr : in) {
-            boolean currInside = keepGreater ? (curr.x >= xEdge) : (curr.x <= xEdge);
+        Point S = input.get(input.size() - 1);
+        boolean S_in = inside.inside(S);
 
-            if (currInside) {
-                if (!prevInside) {
-                    out.add(intersectWithVertical(prev, curr, xEdge));
+        for (Point E : input) {
+            boolean E_in = inside.inside(E);
+
+            if (E_in) {
+                if (!S_in) {
+                    output.add(intersector.intersect(S, E));
                 }
-                out.add(curr);
-            } else if (prevInside) {
-                out.add(intersectWithVertical(prev, curr, xEdge));
+                output.add(E);
+            } else {
+                if (S_in) {
+                    output.add(intersector.intersect(S, E));
+                }
             }
 
-            prev = curr;
-            prevInside = currInside;
+            S = E;
+            S_in = E_in;
         }
-        return out;
+        return output;
     }
 
-    private List<Point> clipAgainstHorizontal(List<Point> in, double yEdge, boolean keepGreater) {
-        if (in.size() < 3) return Collections.emptyList();
-        List<Point> out = new ArrayList<>();
-
-        Point prev = in.get(in.size() - 1);
-        boolean prevInside = keepGreater ? (prev.y >= yEdge) : (prev.y <= yEdge);
-
-        for (Point curr : in) {
-            boolean currInside = keepGreater ? (curr.y >= yEdge) : (curr.y <= yEdge);
-
-            if (currInside) {
-                if (!prevInside) {
-                    out.add(intersectWithHorizontal(prev, curr, yEdge));
-                }
-                out.add(curr);
-            } else if (prevInside) {
-                out.add(intersectWithHorizontal(prev, curr, yEdge));
-            }
-
-            prev = curr;
-            prevInside = currInside;
-        }
-        return out;
-    }
-
-    private Point intersectWithVertical(Point a, Point b, double xEdge) {
-        double dx = b.x - a.x;
-        if (Math.abs(dx) < 1e-12) {
-            return new Point(xEdge, a.y);
-        }
-        double t = (xEdge - a.x) / dx;
+    private Point intersectX(double x, Point a, Point b) {
+        if (Math.abs(b.x - a.x) < 1e-9) return new Point(x, a.y);
+        double t = (x - a.x) / (b.x - a.x);
         double y = a.y + t * (b.y - a.y);
-        return new Point(xEdge, y);
+        return new Point(x, y);
     }
 
-    private Point intersectWithHorizontal(Point a, Point b, double yEdge) {
-        double dy = b.y - a.y;
-        if (Math.abs(dy) < 1e-12) {
-            return new Point(a.x, yEdge);
-        }
-        double t = (yEdge - a.y) / dy;
+    private Point intersectY(double y, Point a, Point b) {
+        if (Math.abs(b.y - a.y) < 1e-9) return new Point(a.x, y);
+        double t = (y - a.y) / (b.y - a.y);
         double x = a.x + t * (b.x - a.x);
-        return new Point(x, yEdge);
+        return new Point(x, y);
     }
 
-    private String toSvgPathClosed(List<Point> poly) {
-        StringBuilder sb = new StringBuilder();
-        Point p0 = poly.get(0);
-        sb.append("M ").append(p0.x).append(" ").append(p0.y).append(" ");
-        for (int i = 1; i < poly.size(); i++) {
-            Point p = poly.get(i);
-            sb.append("L ").append(p.x).append(" ").append(p.y).append(" ");
-        }
-        sb.append("Z");
-        return sb.toString();
+    private static final class Point {
+        final double x;
+        final double y;
+        Point(double x, double y) { this.x = x; this.y = y; }
     }
 }

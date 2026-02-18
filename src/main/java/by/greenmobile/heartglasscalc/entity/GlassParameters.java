@@ -131,6 +131,9 @@ public class GlassParameters {
     // отклонение от целевой удельной мощности (%)
     private Double powerDeviationPercent;
 
+    //Отступ от шины
+    private Double busbarClearanceMm;
+
 
     // ===== УТИЛИТЫ =====
 
@@ -150,9 +153,6 @@ public class GlassParameters {
         return patternType != null && patternType == 2;
     }
 
-    public boolean isZigzag() {
-        return patternType == null || patternType == 1;
-    }
 
     /** true, если шины сверху/снизу (ток по высоте). */
     public boolean isVerticalBusbars() {
