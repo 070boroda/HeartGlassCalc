@@ -24,6 +24,12 @@ public class HoneycombEstimator {
     @Value("${honeycomb.physical.minConductFraction:0.10}")
     private double minConductFraction;
 
+    // NEW: what is ablated?
+    // LINES  - ablated are lines/kerf with width=gap (old behavior)
+    // ISLANDS - ablated are hexagon islands; current flows in gaps between them (your case)
+    @Value("${honeycomb.physical.pattern:ISLANDS}")
+    private String physicalPattern;
+
     public double estimateMultiplier(GlassParameters p, double a, double gap) {
         if (a <= 0 || gap < 0) return 0;
 
@@ -56,6 +62,18 @@ public class HoneycombEstimator {
     }
 
     private double estimatePhysical(double a, double gap) {
+        if ("ISLANDS".equalsIgnoreCase(physicalPattern)) {
+            return estimatePhysicalIslands(a, gap);
+        }
+        // default: old behavior (LINES)
+        return estimatePhysicalLines(a, gap);
+    }
+
+    /**
+     * Old model: ablated are lines of width=gap along honeycomb edges.
+     * (Works if current flows inside cells and laser creates insulating grooves.)
+     */
+    private double estimatePhysicalLines(double a, double gap) {
         // rho_L = 2/(sqrt(3)*a)
         double edgeLengthDensity = 2.0 / (Math.sqrt(3.0) * a);
 
@@ -68,6 +86,39 @@ public class HoneycombEstimator {
 
         // tau = 1 + c*(gap/a)
         double tau = 1.0 + tortuosityCoeff * (gap / a);
+
+        // multiplier = tau / f^alpha
+        return tau / Math.pow(f, alpha);
+    }
+
+    /**
+     * New model (your case): ablated are hexagon islands; current flows in gaps between them.
+     * Here gap is the conducting channel width between neighboring islands.
+     *
+     * Conducting fraction f is approximated by area fraction of channels in a hex tiling.
+     * Let s = a + gap/sqrt(3). Then:
+     * f = 1 - (a/s)^2
+     *
+     * Multiplier increases when f decreases (channels get narrower).
+     */
+    private double estimatePhysicalIslands(double a, double gap) {
+        // Effective "cell" side that corresponds to hex island (side a) plus half-gap around it
+        double s = a + gap / Math.sqrt(3.0);
+        if (s <= 0) return 0;
+
+        // Conducting area fraction (channels)
+        double f = 1.0 - Math.pow(a / s, 2.0);
+        if (f < minConductFraction) f = minConductFraction;
+
+        // Tortuosity: narrower channels -> more tortuous current paths.
+        // NOTE: Here tortuosity should GROW when gap shrinks, so we use (a/gap), not (gap/a).
+        double tau = 1.0;
+        if (gap > 0) {
+            tau = 1.0 + tortuosityCoeff * (a / gap);
+        } else {
+            // gap==0 => channels closed, clamp hard
+            tau = 1.0 + tortuosityCoeff * 1e6;
+        }
 
         // multiplier = tau / f^alpha
         return tau / Math.pow(f, alpha);
