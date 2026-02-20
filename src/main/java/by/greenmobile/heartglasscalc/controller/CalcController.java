@@ -25,10 +25,11 @@ public class CalcController {
         GlassParameters params = new GlassParameters();
         params.setPatternType(2);
         params.setBusbarOrientation(1);
-        params.setEdgeOffset(20.0);
-        params.setBusbarWidth(10.0);
+        params.setEdgeOffset(12.0);
+        params.setBusbarWidth(5.0);
         params.setHexSide(30.0);
         params.setHexGap(5.0);
+        params.setBusbarClearanceMm(2.00);
         model.addAttribute("params", params);
         return "index";
     }

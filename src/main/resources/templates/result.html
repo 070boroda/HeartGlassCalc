@@ -183,10 +183,17 @@
         </div>
 
         <div class="card">
+            <div class="label">Отступ от шины</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.busbarClearanceMm,1,1)}"></div>
+            <div class="unit">мм</div>
+        </div>
+
+        <div class="card">
             <div class="label">Ширина шины</div>
             <div class="value" th:text="${#numbers.formatDecimal(result.busbarWidth,1,1)}"></div>
             <div class="unit">мм</div>
         </div>
+
 
         <div class="card">
             <div class="label">Ориентация шин</div>
@@ -222,6 +229,7 @@
             <input type="hidden" name="patternType" value="2">
             <input type="hidden" name="hexSide" th:value="${result.hexSide}">
             <input type="hidden" name="hexGap" th:value="${result.hexGap}">
+            <input type="hidden" name="busbarClearanceMm" th:value="${result.busbarClearanceMm}">
             <button type="submit" class="btn btn-svg">📊 Скачать SVG</button>
         </form>
 
@@ -237,6 +245,7 @@
             <input type="hidden" name="patternType" value="2">
             <input type="hidden" name="hexSide" th:value="${result.hexSide}">
             <input type="hidden" name="hexGap" th:value="${result.hexGap}">
+            <input type="hidden" name="busbarClearanceMm" th:value="${result.busbarClearanceMm}">
             <button type="submit" class="btn btn-dxf">⚙️ Скачать DXF</button>
         </form>
 
@@ -252,6 +261,7 @@
             <input type="hidden" name="patternType" value="2">
             <input type="hidden" name="hexSide" th:value="${result.hexSide}">
             <input type="hidden" name="hexGap" th:value="${result.hexGap}">
+            <input type="hidden" name="busbarClearanceMm" th:value="${result.busbarClearanceMm}">
             <button type="submit" class="btn btn-pdf">🧾 Скачать PDF отчёт</button>
         </form>
 
