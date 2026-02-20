@@ -12,6 +12,13 @@ import java.util.stream.Collectors;
 
 /**
  * Сервис расчёта электрических параметров и геометрии рисунка.
+ *
+ * ВАЖНО:
+ * - Этот сервис НЕ считает «фактические» R_ach / P_ach и отклонения.
+ *   Это делает только EngineeringFacade через solver.
+ * - Здесь считаются:
+ *   R_target, R_raw, multiplier-оценка и геометрия (зигзаг/соты), плюс энергетика.
+ *
  * Все длины в мм, площади в м², мощности в Вт/м², сопротивления в Ом.
  */
 @Service
@@ -78,10 +85,10 @@ public class CalculationService {
 
         params.setRawResistance(rawResistance);
 
-        // Коэффициент удлинения пути тока
+        // Коэффициент удлинения пути тока (первичная оценка)
         double multiplier = totalResistance / rawResistance;
         params.setPathLengthMultiplier(multiplier);
-        log.info("Требуемый коэффициент удлинения пути тока: {}", multiplier);
+        log.info("Требуемый коэффициент удлинения пути тока (оценка): {}", multiplier);
 
         // Выбор режима рисунка
         if (params.isHoneycomb()) {
@@ -92,45 +99,10 @@ public class CalculationService {
             calculateZigzagGeometry(params, verticalBusbars);
         }
 
-        // ===== ФАКТИЧЕСКИЕ параметры по результату геометрии =====
-// В honeycomb мы могли подправить multiplier (после округлений колонок).
-// В zigzag multiplier = целевой, но оставим общую формулу.
-        double areaM2After = (params.getWidth() * params.getHeight()) / 1_000_000.0;
-
-        Double rr = params.getRawResistance();
-        double multFact = params.getPathLengthMultiplier() != null ? params.getPathLengthMultiplier() : 0.0;
-
-        if (rr != null && rr > 0 && multFact > 0) {
-            double achievedR = rr * multFact;
-            params.setAchievedResistance(achievedR);
-
-            // фактическая мощность при 220В
-            double achievedP = (VOLTAGE * VOLTAGE) / achievedR;
-            params.setAchievedPowerWatts(achievedP);
-
-            // удельная мощность по площади
-            double achievedPwm2 = (areaM2After > 0) ? (achievedP / areaM2After) : 0.0;
-            params.setAchievedPowerWm2(achievedPwm2);
-
-            // отклонение от целевой удельной мощности
-            double targetPwm2 = params.getTargetPower() != null ? params.getTargetPower() : 0.0;
-            double devPct = (targetPwm2 > 0) ? ((achievedPwm2 - targetPwm2) / targetPwm2 * 100.0) : 0.0;
-            params.setPowerDeviationPercent(devPct);
-
-            log.info("Факт: R_raw={} Ом, mult_fact={}, R_ach={} Ом, P_ach={} Вт, P_ach_ud={} Вт/м², dev={}%",
-                    rr, multFact, achievedR, achievedP, achievedPwm2, devPct);
-        } else {
-            params.setAchievedResistance(0.0);
-            params.setAchievedPowerWatts(0.0);
-            params.setAchievedPowerWm2(0.0);
-            params.setPowerDeviationPercent(0.0);
-        }
-
-
         // Энергетика
         computeEnergy(params);
 
-        log.info("Расчёт завершён. Результат: {}", params);
+        log.info("Расчёт (без solver) завершён. Результат: {}", params);
         return params;
     }
 
@@ -181,29 +153,20 @@ public class CalculationService {
     // ========================================================================
 
     /**
-     * ВАЖНОЕ отличие от старой версии:
-     * - rows/cols считаются через CEIL (и с небольшим запасом),
-     *   чтобы сетка гарантированно перекрывала рабочую область.
-     * - дальше multiplier подгоняется колонками, но rows мы не уменьшаем,
-     *   чтобы не появлялись пустые полосы.
+     * Геометрия сот должна соответствовать тому, как она будет клипаться в SVG/DXF/solver:
+     * рабочая зона = стекло минус edgeOffset и минус (busbarWidth + clearance) около шин.
      *
-     * Закрытие контуров на границе делается НЕ здесь, а в SVG/DXF генераторах
-     * через клиппинг (обрезку полигона по рабочей зоне).
+     * Важно:
+     * - rows/cols считаются через CEIL + запас, чтобы сетка гарантированно перекрывала clip-область.
+     * - cols можно подгонять под multiplier, НО нельзя уменьшать cols ниже минимума покрытия (colsMin)
+     *   иначе появляются пустые полосы.
      */
     private void calculateHoneycombGeometry(GlassParameters params, boolean verticalBusbars) {
-        double workingWidth = params.getWidth() - 2 * params.getEdgeOffset();
-        double workingHeight = params.getHeight() - 2 * params.getEdgeOffset();
+        double width = params.getWidth();
+        double height = params.getHeight();
 
-        log.debug("Соты: рабочая зона {} x {} мм", workingWidth, workingHeight);
-
-        if (workingWidth <= 0 || workingHeight <= 0) {
-            log.warn("Соты: рабочая зона некорректна, обнуляем параметры");
-            params.setHexSide(0.0);
-            params.setHexGap(0.0);
-            params.setHexCols(0);
-            params.setHexRows(0);
-            return;
-        }
+        double edge = Math.max(0.0, params.getEdgeOffset());
+        double busW = Math.max(0.0, params.getBusbarWidth());
 
         double a = (params.getHexSide() != null && params.getHexSide() > 0)
                 ? params.getHexSide()
@@ -213,45 +176,92 @@ public class CalculationService {
                 ? params.getHexGap()
                 : DEFAULT_HEX_GAP_MM;
 
-        double hexHeight = Math.sqrt(3.0) * a;
+        // Зазор до шины: если null -> gap (так же как в SVG/DXF/solver)
+        double clearance = (params.getBusbarClearanceMm() != null)
+                ? Math.max(0.0, params.getBusbarClearanceMm())
+                : Math.max(0.0, gap);
 
+        if (width <= 2 * edge || height <= 2 * edge) {
+            log.warn("Соты: edgeOffset слишком большой, рабочая зона <=0");
+            params.setHexSide(0.0);
+            params.setHexGap(0.0);
+            params.setHexCols(0);
+            params.setHexRows(0);
+            return;
+        }
+
+        double hexHeight = Math.sqrt(3.0) * a;
         double stepX = 1.5 * a + gap;
         double stepY = hexHeight + gap;
 
-        // CEIL вместо FLOOR + небольшой запас, чтобы сетка перекрывала область
-        int rows = (int) Math.ceil(workingHeight / stepY) + 1;
-        int cols = (int) Math.ceil(workingWidth / stepX) + 1;
-        if (rows < 1) rows = 1;
-        if (cols < 1) cols = 1;
+        // Clip-область (как в SVG/DXF): edgeOffset + busbarWidth + clearance
+        double clipLeft = edge;
+        double clipRight = width - edge;
+        double clipTop = edge;
+        double clipBottom = height - edge;
 
-        log.debug("Соты: первичная оценка cols={} rows={} (a={} мм, gap={} мм)", cols, rows, a, gap);
+        if (verticalBusbars) {
+            clipTop = edge + busW + clearance;
+            clipBottom = height - edge - busW - clearance;
+        } else {
+            clipLeft = edge + busW + clearance;
+            clipRight = width - edge - busW - clearance;
+        }
+
+        double availW = Math.max(0.0, clipRight - clipLeft);
+        double availH = Math.max(0.0, clipBottom - clipTop);
+
+        log.debug("Соты: clipRect=[{},{}]-[{},{}], avail={}x{} мм (a={}, gap={}, clearance={}, ориентация={})",
+                clipLeft, clipTop, clipRight, clipBottom, availW, availH, a, gap, clearance,
+                verticalBusbars ? "верх/низ" : "лево/право");
+
+        if (availW <= 0 || availH <= 0) {
+            log.warn("Соты: clip-область некорректна (availW/availH<=0), обнуляем параметры");
+            params.setHexSide(0.0);
+            params.setHexGap(0.0);
+            params.setHexCols(0);
+            params.setHexRows(0);
+            return;
+        }
+
+        // Минимум, чтобы гарантированно перекрыть clip-область.
+        int rowsMin = (int) Math.ceil(availH / stepY) + 1;
+        int colsMin = (int) Math.ceil(availW / stepX) + 1;
+        rowsMin = Math.max(1, rowsMin);
+        colsMin = Math.max(1, colsMin);
+
+        int rows = rowsMin;
+        int cols = colsMin;
 
         int cellCount = cols * rows;
         double perimeterOneCell = 6.0 * a;
         double totalPerimeter = perimeterOneCell * cellCount;
 
-        double directionLength = verticalBusbars ? workingHeight : workingWidth;
+        double directionLength = verticalBusbars ? availH : availW;
+        directionLength = Math.max(directionLength, 1e-9);
 
         double effectivePathLength = HONEYCOMB_PATH_COEFF * totalPerimeter;
         double estimatedMultiplier = effectivePathLength / directionLength;
-        log.debug("Соты: первичный multiplier ≈ {}", estimatedMultiplier);
+        log.debug("Соты: первичный multiplier ≈ {} (colsMin={}, rowsMin={})", estimatedMultiplier, colsMin, rowsMin);
 
+        // Подгоняем cols под целевой multiplier, но не ниже colsMin
         double targetMultiplier = params.getPathLengthMultiplier();
-        if (estimatedMultiplier > 0) {
+        if (estimatedMultiplier > 0 && targetMultiplier > 0) {
             double scale = targetMultiplier / estimatedMultiplier;
 
             int scaledCols = (int) Math.max(1, Math.round(cols * scale));
-            cols = scaledCols;
+            cols = Math.max(colsMin, scaledCols);
 
             cellCount = cols * rows;
             totalPerimeter = perimeterOneCell * cellCount;
             effectivePathLength = HONEYCOMB_PATH_COEFF * totalPerimeter;
             estimatedMultiplier = effectivePathLength / directionLength;
 
-            log.debug("Соты: после подгонки cols={} -> новый multiplier ≈ {}", cols, estimatedMultiplier);
+            log.debug("Соты: после подгонки cols={} (scaledCols={}) -> новый multiplier ≈ {}",
+                    cols, scaledCols, estimatedMultiplier);
         }
 
-        // Записываем фактический multiplier после округлений
+        // Пишем оценочный multiplier (факт даст solver)
         params.setPathLengthMultiplier(estimatedMultiplier);
 
         params.setHexSide(a);
@@ -264,8 +274,8 @@ public class CalculationService {
         params.setLineSpacing(0.0);
         params.setLineLength(0.0);
 
-        log.info("Соты: a={} мм, gap={} мм, cols={}, rows={}, cellCount={}, итоговый multiplier={}",
-                a, gap, cols, rows, cellCount, estimatedMultiplier);
+        log.info("Соты: a={} мм, gap={} мм, clearance={} мм, cols={}, rows={}, cellCount={}, estMultiplier={}",
+                a, gap, clearance, cols, rows, cellCount, estimatedMultiplier);
     }
 
     // ========================================================================
@@ -417,41 +427,37 @@ public class CalculationService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Грубая оценка multiplier для перебора кандидатов (не для финального результата!).
+     */
+    private double estimateMultiplier(GlassParameters baseParams, double a, double gap) {
+        boolean verticalBusbars = baseParams.isVerticalBusbars();
 
-    private double estimateMultiplier(GlassParameters params,
-                                      double a,
-                                      double gap) {
+        double width = baseParams.getWidth();
+        double height = baseParams.getHeight();
+        double edge = Math.max(0.0, baseParams.getEdgeOffset());
 
-        double workingWidth =
-                params.getWidth() - 2 * params.getEdgeOffset();
-        double workingHeight =
-                params.getHeight() - 2 * params.getEdgeOffset();
+        // Для быстрого перебора можно использовать простую рабочую область по edgeOffset
+        double workingWidth = width - 2 * edge;
+        double workingHeight = height - 2 * edge;
+        if (workingWidth <= 0 || workingHeight <= 0) return 0.0;
 
         double hexHeight = Math.sqrt(3.0) * a;
-
         double stepX = 1.5 * a + gap;
         double stepY = hexHeight + gap;
 
-        if (stepX <= 0 || stepY <= 0) return 0;
+        int rows = (int) Math.ceil(workingHeight / stepY) + 1;
+        int cols = (int) Math.ceil(workingWidth / stepX) + 1;
+        rows = Math.max(1, rows);
+        cols = Math.max(1, cols);
 
-        // НЕ используем ceil
-        double densityX = workingWidth / stepX;
-        double densityY = workingHeight / stepY;
-
-        double cellCount = densityX * densityY;
-
+        int cellCount = rows * cols;
         double totalPerimeter = 6.0 * a * cellCount;
 
-        double directionLength =
-                params.isVerticalBusbars()
-                        ? workingHeight
-                        : workingWidth;
+        double directionLength = verticalBusbars ? workingHeight : workingWidth;
+        directionLength = Math.max(directionLength, 1e-9);
 
-        if (directionLength <= 0) return 0;
-
-        return 0.35 * totalPerimeter / directionLength;
+        double effPath = HONEYCOMB_PATH_COEFF * totalPerimeter;
+        return effPath / directionLength;
     }
-
-
-
 }

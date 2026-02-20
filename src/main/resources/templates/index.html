@@ -223,5 +223,41 @@
     </form>
 </div>
 
+<!-- Loading overlay (shows while long backend methods execute) -->
+<div id="loadingOverlay" style="
+  display:none; position:fixed; inset:0; background:rgba(255,255,255,0.75);
+  z-index:9999; align-items:center; justify-content:center;">
+    <div style="
+      width:56px; height:56px; border:6px solid #ccc; border-top-color:#333;
+      border-radius:50%; animation: spin 0.9s linear infinite;">
+    </div>
+</div>
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+  (function () {
+    const overlay = document.getElementById('loadingOverlay');
+    const show = () => { if (overlay) overlay.style.display = 'flex'; };
+    const hide = () => { if (overlay) overlay.style.display = 'none'; };
+
+    // show overlay on any form submit (AUTO / MANUAL)
+    document.querySelectorAll('form').forEach(f => {
+      f.addEventListener('submit', () => {
+        show();
+        // prevent double-submit
+        f.querySelectorAll('button, input[type="submit"]').forEach(b => { b.disabled = true; });
+      });
+    });
+
+    // hide after page load
+    window.addEventListener('load', () => hide());
+    // hide when coming back from bfcache (back button)
+    window.addEventListener('pageshow', (e) => { if (e.persisted) hide(); });
+  })();
+</script>
+
 </body>
 </html>

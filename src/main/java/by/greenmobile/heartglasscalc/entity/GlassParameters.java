@@ -135,6 +135,15 @@ public class GlassParameters {
     private Double busbarClearanceMm;
 
 
+    /**
+     * Шаг сетки solver (dx=dy), мм.
+     * null => по умолчанию 2.0 мм.
+     *
+     * Идея: для AUTO можно ставить 3–4 мм (быстрее), а для финального/manual — 2 мм (точнее).
+     */
+    private Double solverMeshStepMm;
+
+
     // ===== УТИЛИТЫ =====
 
     /** Базовая проверка входных данных, чтобы не ловить деление на ноль. */

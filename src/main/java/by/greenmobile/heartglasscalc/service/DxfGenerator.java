@@ -9,6 +9,17 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Генерация DXF:
+ * - рамка стекла, зона отступа;
+ * - шины (горизонтальные или вертикальные) внутри рабочей зоны;
+ * - либо зигзаг, либо решётка сот в слое ABLATION.
+ *
+ * В режиме "соты":
+ * - соты НЕ удаляются рядами
+ * - контуры, которые заходят в зону "зазор до шины" (busbarClearanceMm),
+ *   ПОДРЕЗАЮТСЯ геометрически прямоугольником рабочей области, и остаются замкнутыми.
+ */
 @Component
 @Slf4j
 public class DxfGenerator {
@@ -19,14 +30,16 @@ public class DxfGenerator {
             return "";
         }
         if (params.isHoneycomb()) {
+            log.info("DXF: режим сот (honeycomb)");
             return generateHoneycombDxf(params);
         } else {
+            log.info("DXF: режим зигзаг");
             return generateZigzagDxf(params);
         }
     }
 
     // ========================================================================
-    // ЗИГЗАГ (как было)
+    // ЗИГЗАГ
     // ========================================================================
 
     private String generateZigzagDxf(GlassParameters params) {
@@ -46,22 +59,37 @@ public class DxfGenerator {
         double safeLeft = offset;
         double safeRight = width - offset;
 
+        log.debug("DXF зигзаг: width={} height={} offset={} lines={} spacing={} orientation={}",
+                width, height, offset, lineCount, spacing,
+                verticalBusbars ? "верх/низ" : "лево/право");
+
         writeHeader(out);
 
+        // рамка
         addRectangle(out, 0, 0, width, height, "GLASS");
 
+        // зона отступа
         if (offset > 0 && width > 2 * offset && height > 2 * offset) {
-            addRectangle(out, offset, offset, width - 2 * offset, height - 2 * offset, "SAFE_ZONE");
+            addRectangle(out, offset, offset,
+                    width - 2 * offset,
+                    height - 2 * offset,
+                    "SAFE_ZONE");
         }
 
+        // шины
         if (verticalBusbars) {
-            addRectangle(out, safeLeft, safeTop, width - 2 * offset, busbarWidth, "BUSBAR");
-            addRectangle(out, safeLeft, safeBottom - busbarWidth, width - 2 * offset, busbarWidth, "BUSBAR");
+            addRectangle(out, safeLeft, safeTop,
+                    width - 2 * offset, busbarWidth, "BUSBAR");
+            addRectangle(out, safeLeft, safeBottom - busbarWidth,
+                    width - 2 * offset, busbarWidth, "BUSBAR");
         } else {
-            addRectangle(out, safeLeft, safeTop, busbarWidth, safeBottom - safeTop, "BUSBAR");
-            addRectangle(out, safeRight - busbarWidth, safeTop, busbarWidth, safeBottom - safeTop, "BUSBAR");
+            addRectangle(out, safeLeft, safeTop,
+                    busbarWidth, safeBottom - safeTop, "BUSBAR");
+            addRectangle(out, safeRight - busbarWidth, safeTop,
+                    busbarWidth, safeBottom - safeTop, "BUSBAR");
         }
 
+        // линии абляции
         if (lineCount > 0 && spacing > 0) {
             if (verticalBusbars) {
                 double y1 = safeTop + busbarWidth;
@@ -88,7 +116,7 @@ public class DxfGenerator {
     }
 
     // ========================================================================
-    // СОТЫ (подрезка полигонов и закрытый контур)
+    // СОТЫ
     // ========================================================================
 
     private String generateHoneycombDxf(GlassParameters params) {
@@ -101,85 +129,90 @@ public class DxfGenerator {
         double busbarWidth = params.getBusbarWidth();
         boolean verticalBusbars = params.isVerticalBusbars();
 
-        double a = params.getHexSide() != null ? params.getHexSide() : 30.0;
+        double a = params.getHexSide() != null ? params.getHexSide() : 0.0;
         double gap = params.getHexGap() != null ? params.getHexGap() : 2.0;
 
-        double clearance = (params.getBusbarClearanceMm() != null && params.getBusbarClearanceMm() >= 0)
-                ? params.getBusbarClearanceMm()
-                : gap;
+        // NEW: зазор до шины (если null -> gap)
+        double clearance = (params.getBusbarClearanceMm() != null)
+                ? Math.max(0.0, params.getBusbarClearanceMm())
+                : Math.max(0.0, gap);
 
-        double hexHeight = Math.sqrt(3.0) * a;
-        double stepX = 1.5 * a + gap;
-        double stepY = hexHeight + gap;
+        Integer colsObj = params.getHexCols();
+        Integer rowsObj = params.getHexRows();
+        int cols = colsObj != null ? colsObj : 0;
+        int rows = rowsObj != null ? rowsObj : 0;
 
-        double safeLeft = offset;
-        double safeRight = width - offset;
         double safeTop = offset;
         double safeBottom = height - offset;
+        double safeLeft = offset;
+        double safeRight = width - offset;
 
-        double clipMinX, clipMaxX, clipMinY, clipMaxY;
-        if (verticalBusbars) {
-            clipMinX = safeLeft;
-            clipMaxX = safeRight;
-            clipMinY = safeTop + busbarWidth + clearance;
-            clipMaxY = safeBottom - busbarWidth - clearance;
-        } else {
-            clipMinX = safeLeft + busbarWidth + clearance;
-            clipMaxX = safeRight - busbarWidth - clearance;
-            clipMinY = safeTop;
-            clipMaxY = safeBottom;
-        }
+        log.debug("DXF соты: width={} height={} offset={} a={} gap={} clearance={} cols={} rows={} orientation={}",
+                width, height, offset, a, gap, clearance, cols, rows,
+                verticalBusbars ? "верх/низ" : "лево/право");
 
         writeHeader(out);
 
+        // рамка
         addRectangle(out, 0, 0, width, height, "GLASS");
+
+        // зона отступа
         if (offset > 0 && width > 2 * offset && height > 2 * offset) {
-            addRectangle(out, offset, offset, width - 2 * offset, height - 2 * offset, "SAFE_ZONE");
+            addRectangle(out, offset, offset,
+                    width - 2 * offset,
+                    height - 2 * offset,
+                    "SAFE_ZONE");
         }
 
+        // шины
         if (verticalBusbars) {
-            addRectangle(out, safeLeft, safeTop, width - 2 * offset, busbarWidth, "BUSBAR");
-            addRectangle(out, safeLeft, safeBottom - busbarWidth, width - 2 * offset, busbarWidth, "BUSBAR");
+            addRectangle(out, safeLeft, safeTop,
+                    width - 2 * offset, busbarWidth, "BUSBAR");
+            addRectangle(out, safeLeft, safeBottom - busbarWidth,
+                    width - 2 * offset, busbarWidth, "BUSBAR");
         } else {
-            addRectangle(out, safeLeft, safeTop, busbarWidth, safeBottom - safeTop, "BUSBAR");
-            addRectangle(out, safeRight - busbarWidth, safeTop, busbarWidth, safeBottom - safeTop, "BUSBAR");
+            addRectangle(out, safeLeft, safeTop,
+                    busbarWidth, safeBottom - safeTop, "BUSBAR");
+            addRectangle(out, safeRight - busbarWidth, safeTop,
+                    busbarWidth, safeBottom - safeTop, "BUSBAR");
         }
 
-        if (clipMaxX <= clipMinX || clipMaxY <= clipMinY) {
-            log.warn("DXF соты: рабочая зона выродилась (clearance={} мм).", clearance);
+        if (a <= 0 || cols <= 0 || rows <= 0) {
+            log.warn("DXF соты: некорректные параметры (a={}, cols={}, rows={}) — соты не рисую", a, cols, rows);
             writeFooter(out);
             out.flush();
             return sw.toString();
         }
 
-        int colMin = (int) Math.floor((clipMinX - 2 * a) / stepX) - 2;
-        int colMax = (int) Math.ceil((clipMaxX + 2 * a) / stepX) + 2;
-        int rowMin = (int) Math.floor((clipMinY - 2 * hexHeight) / stepY) - 3;
-        int rowMax = (int) Math.ceil((clipMaxY + 2 * hexHeight) / stepY) + 3;
+        double hexHeight = Math.sqrt(3.0) * a;
+        double stepX = 1.5 * a + gap;
+        double stepY = hexHeight + gap;
+
+        // Прямоугольник, внутри которого разрешена абляция (с учетом шин+clearance)
+        Rect clipRect = computeHoneycombClipRect(width, height, offset, busbarWidth, clearance, verticalBusbars);
+
+        // Старт сетки центров сот — ВАЖНО: от clipRect, чтобы сетка покрывала всю клип-область
+        double startX = clipRect.xmin + a;
+        double startY = clipRect.ymin + hexHeight / 2.0;
 
         int drawn = 0;
-        int clippedCount = 0;
+        int clipped = 0;
 
-        for (int col = colMin; col <= colMax; col++) {
-            double cx = (col * stepX) + safeLeft + a;
+        for (int col = 0; col < cols; col++) {
+            double cxBase = startX + col * stepX;
             double colOffsetY = (col % 2 == 0) ? 0 : (stepY / 2.0);
 
-            for (int row = rowMin; row <= rowMax; row++) {
-                double cy = safeTop + (hexHeight / 2.0) + (row * stepY) + colOffsetY;
+            for (int row = 0; row < rows; row++) {
+                double cy = startY + row * stepY + colOffsetY;
 
-                // Быстрый bbox-фильтр
-                if (cx + a < clipMinX - 1) continue;
-                if (cx - a > clipMaxX + 1) continue;
-                if (cy + hexHeight / 2.0 < clipMinY - 1) continue;
-                if (cy - hexHeight / 2.0 > clipMaxY + 1) continue;
+                List<Point> hex = buildHexagon(cxBase, cy, a);
+                List<Point> clippedPoly = clipPolygonToRect(hex, clipRect);
 
-                List<Point> hex = buildHexagon(cx, cy, a);
-                List<Point> clipped = clipPolygonToRect(hex, clipMinX, clipMaxX, clipMinY, clipMaxY);
-                if (clipped.size() < 3) continue;
+                if (clippedPoly.size() < 3) continue;
 
-                if (clipped.size() != hex.size()) clippedCount++;
+                if (clippedPoly.size() != hex.size()) clipped++;
 
-                addLwPolylineClosed(out, clipped, "ABLATION");
+                addPolygonClosed(out, clippedPoly, "ABLATION");
                 drawn++;
             }
         }
@@ -187,8 +220,8 @@ public class DxfGenerator {
         writeFooter(out);
         out.flush();
 
-        log.info("DXF соты: контуров={} (подрезанных={}), a={} gap={} clearance={}",
-                drawn, clippedCount, a, gap, clearance);
+        log.info("DXF соты: контуров={} (подрезанных={}), a={} gap={} clearance={} ориентация={}",
+                drawn, clipped, a, gap, clearance, verticalBusbars ? "верх/низ" : "лево/право");
 
         return sw.toString();
     }
@@ -198,56 +231,97 @@ public class DxfGenerator {
     // ========================================================================
 
     private void writeHeader(PrintWriter out) {
-        out.println("0"); out.println("SECTION");
-        out.println("2"); out.println("HEADER");
-        out.println("0"); out.println("ENDSEC");
-        out.println("0"); out.println("SECTION");
-        out.println("2"); out.println("ENTITIES");
+        out.println("0");
+        out.println("SECTION");
+        out.println("2");
+        out.println("HEADER");
+        out.println("0");
+        out.println("ENDSEC");
+        out.println("0");
+        out.println("SECTION");
+        out.println("2");
+        out.println("ENTITIES");
     }
 
     private void writeFooter(PrintWriter out) {
-        out.println("0"); out.println("ENDSEC");
-        out.println("0"); out.println("EOF");
+        out.println("0");
+        out.println("ENDSEC");
+        out.println("0");
+        out.println("EOF");
     }
 
-    private void addLine(PrintWriter out, double x1, double y1, double x2, double y2, String layer) {
-        out.println("0"); out.println("LINE");
-        out.println("8"); out.println(layer);
-        out.println("10"); out.println(x1);
-        out.println("20"); out.println(y1);
-        out.println("11"); out.println(x2);
-        out.println("21"); out.println(y2);
+    private void addLine(PrintWriter out,
+                         double x1, double y1,
+                         double x2, double y2,
+                         String layer) {
+        out.println("0");
+        out.println("LINE");
+        out.println("8");
+        out.println(layer);
+        out.println("10");
+        out.println(x1);
+        out.println("20");
+        out.println(y1);
+        out.println("11");
+        out.println(x2);
+        out.println("21");
+        out.println(y2);
     }
 
-    private void addRectangle(PrintWriter out, double x, double y, double w, double h, String layer) {
+    private void addRectangle(PrintWriter out,
+                              double x, double y,
+                              double w, double h,
+                              String layer) {
         addLine(out, x, y, x + w, y, layer);
         addLine(out, x + w, y, x + w, y + h, layer);
         addLine(out, x + w, y + h, x, y + h, layer);
         addLine(out, x, y + h, x, y, layer);
     }
 
-    // CLOSED LWPOLYLINE
-    private void addLwPolylineClosed(PrintWriter out, List<Point> pts, String layer) {
-        out.println("0");
-        out.println("LWPOLYLINE");
-        out.println("8");
-        out.println(layer);
-
-        out.println("90"); // vertex count
-        out.println(pts.size());
-
-        out.println("70"); // flags: 1 = closed
-        out.println(1);
-
-        for (Point p : pts) {
-            out.println("10"); out.println(p.x);
-            out.println("20"); out.println(p.y);
+    private void addPolygonClosed(PrintWriter out, List<Point> pts, String layer) {
+        for (int i = 0; i < pts.size(); i++) {
+            Point a = pts.get(i);
+            Point b = pts.get((i + 1) % pts.size());
+            addLine(out, a.x, a.y, b.x, b.y, layer);
         }
     }
 
     // ========================================================================
-    // Геометрия: hex + клиппинг
+    // Геометрия и клиппинг (та же логика, что и в SVG)
     // ========================================================================
+
+    private static class Point {
+        final double x, y;
+        Point(double x, double y) { this.x = x; this.y = y; }
+    }
+
+    private static class Rect {
+        final double xmin, ymin, xmax, ymax;
+        Rect(double xmin, double ymin, double xmax, double ymax) {
+            this.xmin = xmin; this.ymin = ymin; this.xmax = xmax; this.ymax = ymax;
+        }
+    }
+
+    private Rect computeHoneycombClipRect(double width, double height, double offset, double busbarWidth,
+                                          double clearance, boolean verticalBusbars) {
+        double left = offset;
+        double right = width - offset;
+        double top = offset;
+        double bottom = height - offset;
+
+        if (verticalBusbars) {
+            top = offset + busbarWidth + clearance;
+            bottom = height - offset - busbarWidth - clearance;
+        } else {
+            left = offset + busbarWidth + clearance;
+            right = width - offset - busbarWidth - clearance;
+        }
+
+        if (right < left) right = left;
+        if (bottom < top) bottom = top;
+
+        return new Rect(left, top, right, bottom);
+    }
 
     private List<Point> buildHexagon(double cx, double cy, double a) {
         double r = a;
@@ -260,70 +334,72 @@ public class DxfGenerator {
         double yTop = cy - h;
         double yBottom = cy + h;
 
-        List<Point> p = new ArrayList<>(6);
-        p.add(new Point(x0, yTop));
-        p.add(new Point(x1, yTop));
-        p.add(new Point(xRight, cy));
-        p.add(new Point(x1, yBottom));
-        p.add(new Point(x0, yBottom));
-        p.add(new Point(xLeft, cy));
-        return p;
+        List<Point> pts = new ArrayList<>(6);
+        pts.add(new Point(x0, yTop));
+        pts.add(new Point(x1, yTop));
+        pts.add(new Point(xRight, cy));
+        pts.add(new Point(x1, yBottom));
+        pts.add(new Point(x0, yBottom));
+        pts.add(new Point(xLeft, cy));
+        return pts;
     }
 
-    private List<Point> clipPolygonToRect(List<Point> subject, double minX, double maxX, double minY, double maxY) {
-        List<Point> out = subject;
-        out = clipAgainstEdge(out, p -> p.x >= minX, (a, b) -> intersectX(minX, a, b));
-        if (out.isEmpty()) return out;
-        out = clipAgainstEdge(out, p -> p.x <= maxX, (a, b) -> intersectX(maxX, a, b));
-        if (out.isEmpty()) return out;
-        out = clipAgainstEdge(out, p -> p.y >= minY, (a, b) -> intersectY(minY, a, b));
-        if (out.isEmpty()) return out;
-        out = clipAgainstEdge(out, p -> p.y <= maxY, (a, b) -> intersectY(maxY, a, b));
+    private List<Point> clipPolygonToRect(List<Point> poly, Rect r) {
+        List<Point> out = poly;
+        out = clipByEdge(out, p -> p.x >= r.xmin, (a,b) -> intersectVertical(a,b,r.xmin));
+        out = clipByEdge(out, p -> p.x <= r.xmax, (a,b) -> intersectVertical(a,b,r.xmax));
+        out = clipByEdge(out, p -> p.y >= r.ymin, (a,b) -> intersectHorizontal(a,b,r.ymin));
+        out = clipByEdge(out, p -> p.y <= r.ymax, (a,b) -> intersectHorizontal(a,b,r.ymax));
         return out;
     }
 
-    private interface InsideTest { boolean inside(Point p); }
-    private interface Intersector { Point intersect(Point a, Point b); }
+    private interface Inside {
+        boolean test(Point p);
+    }
+    private interface Intersect {
+        Point at(Point a, Point b);
+    }
 
-    private List<Point> clipAgainstEdge(List<Point> input, InsideTest inside, Intersector intersector) {
+    private List<Point> clipByEdge(List<Point> input, Inside inside, Intersect intersect) {
         List<Point> output = new ArrayList<>();
         if (input.isEmpty()) return output;
 
-        Point S = input.get(input.size() - 1);
-        boolean S_in = inside.inside(S);
+        Point prev = input.get(input.size() - 1);
+        boolean prevIn = inside.test(prev);
 
-        for (Point E : input) {
-            boolean E_in = inside.inside(E);
+        for (Point cur : input) {
+            boolean curIn = inside.test(cur);
 
-            if (E_in) {
-                if (!S_in) output.add(intersector.intersect(S, E));
-                output.add(E);
+            if (curIn) {
+                if (!prevIn) {
+                    output.add(intersect.at(prev, cur));
+                }
+                output.add(cur);
             } else {
-                if (S_in) output.add(intersector.intersect(S, E));
+                if (prevIn) {
+                    output.add(intersect.at(prev, cur));
+                }
             }
-            S = E;
-            S_in = E_in;
+
+            prev = cur;
+            prevIn = curIn;
         }
         return output;
     }
 
-    private Point intersectX(double x, Point a, Point b) {
-        if (Math.abs(b.x - a.x) < 1e-9) return new Point(x, a.y);
-        double t = (x - a.x) / (b.x - a.x);
+    private Point intersectVertical(Point a, Point b, double x) {
+        double dx = b.x - a.x;
+        if (Math.abs(dx) < 1e-12) return new Point(x, a.y);
+        double t = (x - a.x) / dx;
         double y = a.y + t * (b.y - a.y);
         return new Point(x, y);
     }
 
-    private Point intersectY(double y, Point a, Point b) {
-        if (Math.abs(b.y - a.y) < 1e-9) return new Point(a.x, y);
-        double t = (y - a.y) / (b.y - a.y);
+    private Point intersectHorizontal(Point a, Point b, double y) {
+        double dy = b.y - a.y;
+        if (Math.abs(dy) < 1e-12) return new Point(a.x, y);
+        double t = (y - a.y) / dy;
         double x = a.x + t * (b.x - a.x);
         return new Point(x, y);
-    }
-
-    private static final class Point {
-        final double x;
-        final double y;
-        Point(double x, double y) { this.x = x; this.y = y; }
     }
 }
