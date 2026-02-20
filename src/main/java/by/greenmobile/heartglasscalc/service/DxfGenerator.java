@@ -192,28 +192,32 @@ public class DxfGenerator {
         Rect clipRect = computeHoneycombClipRect(width, height, offset, busbarWidth, clearance, verticalBusbars);
 
         // Старт сетки центров сот — ВАЖНО: от clipRect, чтобы сетка покрывала всю клип-область
-        double startX = clipRect.xmin + a;
-        double startY = clipRect.ymin + hexHeight / 2.0;
+        double startX = clipRect.xmin - stepX;
+        double startY = clipRect.ymin - stepY;
 
         int drawn = 0;
         int clipped = 0;
 
-        for (int col = 0; col < cols; col++) {
-            double cxBase = startX + col * stepX;
-            double colOffsetY = (col % 2 == 0) ? 0 : (stepY / 2.0);
+        for (int col = -1; col <= cols + 1; col++) {
 
-            for (int row = 0; row < rows; row++) {
-                double cy = startY + row * stepY + colOffsetY;
+            double cx = startX + (col + 1) * stepX;
+            double colOffsetY = (Math.floorMod(col, 2) == 0)
+                    ? 0.0
+                    : (stepY / 2.0);
 
-                List<Point> hex = buildHexagon(cxBase, cy, a);
+            for (int row = -1; row <= rows + 1; row++) {
+
+                double cy = startY + (row + 1) * stepY + colOffsetY;
+
+                if (cx + a < clipRect.xmin || cx - a > clipRect.xmax) continue;
+                if (cy + hexHeight / 2 < clipRect.ymin || cy - hexHeight / 2 > clipRect.ymax)
+                    continue;
+
+                List<Point> hex = buildHexagon(cx, cy, a);
                 List<Point> clippedPoly = clipPolygonToRect(hex, clipRect);
-
                 if (clippedPoly.size() < 3) continue;
 
-                if (clippedPoly.size() != hex.size()) clipped++;
-
                 addPolygonClosed(out, clippedPoly, "ABLATION");
-                drawn++;
             }
         }
 
