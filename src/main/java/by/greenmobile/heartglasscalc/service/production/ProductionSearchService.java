@@ -9,30 +9,25 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ProductionSearchService {
-
     private final ElectricalEngine electrical;
     private final HoneycombEstimator estimator;
 
-    @Value("${production.topN:5}")
-    private int topN;
-
-    @Value("${production.tolerancePercent:10}")
-    private double tolerancePercent;
-
-    @Value("${production.autoExpand:true}")
-    private boolean autoExpand;
+    @Value("${production.topN:5}") private int topN;
+    @Value("${production.tolerancePercent:10}") private double tolerancePercent;
+    @Value("${production.autoExpand:true}") private boolean autoExpand;
 
     @Value("${production.base.aMin:10}") private double baseAMin;
     @Value("${production.base.aMax:70}") private double baseAMax;
     @Value("${production.base.aStep:1.0}") private double baseAStep;
-
     @Value("${production.base.gapMin:0.5}") private double baseGapMin;
     @Value("${production.base.gapMax:10}") private double baseGapMax;
     @Value("${production.base.gapStep:0.5}") private double baseGapStep;
@@ -40,7 +35,6 @@ public class ProductionSearchService {
     @Value("${production.ext.aMin:5}") private double extAMin;
     @Value("${production.ext.aMax:80}") private double extAMax;
     @Value("${production.ext.aStep:0.5}") private double extAStep;
-
     @Value("${production.ext.gapMin:0.5}") private double extGapMin;
     @Value("${production.ext.gapMax:12}") private double extGapMax;
     @Value("${production.ext.gapStep:0.5}") private double extGapStep;
@@ -48,20 +42,14 @@ public class ProductionSearchService {
     public List<CandidateDesign> findTopDesigns(GlassParameters base) {
         base.setPatternType(2);
 
-        List<ScoredCandidate> baseFound =
-                search(base, baseAMin, baseAMax, baseAStep, baseGapMin, baseGapMax, baseGapStep);
-
+        List<ScoredCandidate> baseFound = search(base, baseAMin, baseAMax, baseAStep, baseGapMin, baseGapMax, baseGapStep);
         List<ScoredCandidate> accepted = filterByTolerance(baseFound, tolerancePercent);
-
         if (!accepted.isEmpty()) return toTop(accepted, topN);
 
         if (!autoExpand) return toTop(baseFound, topN);
 
         log.info("AUTO: nothing in base range, expanding...");
-
-        List<ScoredCandidate> extFound =
-                search(base, extAMin, extAMax, extAStep, extGapMin, extGapMax, extGapStep);
-
+        List<ScoredCandidate> extFound = search(base, extAMin, extAMax, extAStep, extGapMin, extGapMax, extGapStep);
         List<ScoredCandidate> extAccepted = filterByTolerance(extFound, tolerancePercent);
         if (!extAccepted.isEmpty()) return toTop(extAccepted, topN);
 
@@ -72,14 +60,14 @@ public class ProductionSearchService {
                                          double aMin, double aMax, double aStep,
                                          double gMin, double gMax, double gStep) {
 
-        double areaM2 = electrical.computeAreaM2(base);
+        // ВАЖНО: удельная мощность (Вт/м²) — по активной зоне между шинами
+        double areaM2 = electrical.computeActiveAreaM2(base);
         double rawR = electrical.computeRawResistance(base);
 
         List<ScoredCandidate> out = new ArrayList<>();
 
         for (double a = aMin; a <= aMax + 1e-9; a += aStep) {
             for (double gap = gMin; gap <= gMax + 1e-9; gap += gStep) {
-
                 double mult = estimator.estimateMultiplier(base, a, gap);
                 if (mult <= 0) continue;
 
@@ -93,8 +81,10 @@ public class ProductionSearchService {
                     dev = (pWm2 - base.getTargetPower()) / base.getTargetPower() * 100.0;
                 }
 
+                // ранжирование "технологичности"
                 double ablIntensity = gap / a;
 
+                // оценка плотности ячеек
                 double hexH = Math.sqrt(3.0) * a;
                 double stepX = 1.5 * a + gap;
                 double stepY = hexH + gap;
@@ -130,7 +120,7 @@ public class ProductionSearchService {
     public MaxAchievable estimateMaxAchievable(GlassParameters base) {
         base.setPatternType(2);
 
-        double areaM2 = electrical.computeAreaM2(base);
+        double areaM2 = electrical.computeActiveAreaM2(base);
         double rawR = electrical.computeRawResistance(base);
 
         double maxMult = 0.0;

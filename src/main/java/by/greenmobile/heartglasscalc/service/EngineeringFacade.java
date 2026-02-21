@@ -11,18 +11,18 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class EngineeringFacade {
-
     private final ElectricalEngine electrical;
     private final HoneycombEstimator estimator;
 
     public GlassParameters calculateManual(GlassParameters p) {
         if (p == null) return null;
 
+        // honeycomb
         p.setPatternType(2);
 
-        double areaM2 = electrical.computeAreaM2(p);
-
-        double rTarget = electrical.computeTargetResistance(p);
+        // ВАЖНО: расчёт по активной зоне (между шинами)
+        double areaM2 = electrical.computeActiveAreaM2(p);
+        double rTarget = electrical.computeTargetResistance(p, true);
         p.setTotalResistance(rTarget);
 
         double rRaw = electrical.computeRawResistance(p);
@@ -46,8 +46,8 @@ public class EngineeringFacade {
         }
         p.setPowerDeviationPercent(dev);
 
-        log.info("MANUAL: R_target={}, R_raw={}, mult={}, R_ach={}, P_ach={}, dev={}",
-                rTarget, rRaw, multFact, rAch, pWm2, dev);
+        log.info("MANUAL(active): areaM2={}, R_target={}, R_raw={}, mult={}, R_ach={}, P_ach={}, dev={}",
+                areaM2, rTarget, rRaw, multFact, rAch, pWm2, dev);
 
         return p;
     }

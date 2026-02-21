@@ -9,7 +9,8 @@ import by.greenmobile.heartglasscalc.service.production.RecommendationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PostMapping;
 
 import java.util.List;
 
@@ -28,7 +29,10 @@ public class ProductionController {
         List<CandidateDesign> top = productionSearchService.findTopDesigns(params);
 
         double rawR = electricalEngine.computeRawResistance(params);
-        double targetR = electricalEngine.computeTargetResistance(params);
+
+        // ВАЖНО: целевое сопротивление считаем под targetPower (Вт/м²) по активной зоне
+        double targetR = electricalEngine.computeTargetResistance(params, true);
+
         double requiredMult = (rawR > 0) ? (targetR / rawR) : 0;
 
         ProductionSearchService.MaxAchievable max = productionSearchService.estimateMaxAchievable(params);
@@ -36,7 +40,7 @@ public class ProductionController {
         boolean achievable = !top.isEmpty() && Math.abs(top.get(0).getDeviationPercent()) <= 10.0;
 
         String rec = achievable
-                ? "✅ Цель достижима. Выберите вариант и нажмите «Применить»."
+                ? "Цель достижима. Выберите вариант и нажмите «Применить»."
                 : recommendationService.generateRecommendation(params);
 
         ProductionResult pr = new ProductionResult(
