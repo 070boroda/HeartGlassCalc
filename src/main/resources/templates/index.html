@@ -193,9 +193,17 @@
             </div>
 
             <div>
-                <label>Зазор (ширина абляции) gap (мм)</label>
+                <label>Зазор gap (мм)</label>
                 <input type="number" step="0.5" min="0" th:field="*{hexGap}">
-                <div class="note">Ширина выжженной линии/зазора между сотами.</div>
+                <div class="note">При ISLANDS: это ширина проводящей дорожки/канала между островками.</div>
+            </div>
+            <div>
+                <label>Измеренное сопротивление R_fact (Ом) — калибровка</label>
+                <input type="number" step="0.1" min="0" th:field="*{measuredResistance}">
+                <div class="note">
+                    Необязательно. Если указать — в результате и PDF появится рекомендация
+                    для <b>honeycomb.multiplier.scale</b> (scale = R_fact / R_calc).
+                </div>
             </div>
 
         </div>

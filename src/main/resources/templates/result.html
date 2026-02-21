@@ -193,6 +193,24 @@
             <div class="value" th:text="${#numbers.formatDecimal(result.busbarWidth,1,1)}"></div>
             <div class="unit">мм</div>
         </div>
+        <!-- Калибровка (если введено R_fact) -->
+        <div class="card" th:if="${result.measuredResistance != null && result.measuredResistance > 0}">
+            <div class="label">R_fact (измеренное)</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.measuredResistance,1,2)}"></div>
+            <div class="unit">Ом</div>
+        </div>
+
+        <div class="card" th:if="${result.recommendedMultiplierScale != null}">
+            <div class="label">Рекомендованный multiplier.scale</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.recommendedMultiplierScale,1,3)}"></div>
+            <div class="unit">вставить в application.properties</div>
+        </div>
+
+        <div class="card" th:if="${result.calibrationErrorPercent != null}">
+            <div class="label">Ошибка модели (R_calc vs R_fact)</div>
+            <div class="value" th:text="${#numbers.formatDecimal(result.calibrationErrorPercent,1,1)}"></div>
+            <div class="unit">%</div>
+        </div>
 
 
         <div class="card">
@@ -230,6 +248,7 @@
             <input type="hidden" name="hexSide" th:value="${result.hexSide}">
             <input type="hidden" name="hexGap" th:value="${result.hexGap}">
             <input type="hidden" name="busbarClearanceMm" th:value="${result.busbarClearanceMm}">
+            <input type="hidden" name="measuredResistance" th:value="${result.measuredResistance}">
             <button type="submit" class="btn btn-svg">📊 Скачать SVG</button>
         </form>
 
@@ -246,6 +265,7 @@
             <input type="hidden" name="hexSide" th:value="${result.hexSide}">
             <input type="hidden" name="hexGap" th:value="${result.hexGap}">
             <input type="hidden" name="busbarClearanceMm" th:value="${result.busbarClearanceMm}">
+            <input type="hidden" name="measuredResistance" th:value="${result.measuredResistance}">
             <button type="submit" class="btn btn-dxf">⚙️ Скачать DXF</button>
         </form>
 
@@ -262,6 +282,7 @@
             <input type="hidden" name="hexSide" th:value="${result.hexSide}">
             <input type="hidden" name="hexGap" th:value="${result.hexGap}">
             <input type="hidden" name="busbarClearanceMm" th:value="${result.busbarClearanceMm}">
+            <input type="hidden" name="measuredResistance" th:value="${result.measuredResistance}">
             <button type="submit" class="btn btn-pdf">🧾 Скачать PDF отчёт</button>
         </form>
 

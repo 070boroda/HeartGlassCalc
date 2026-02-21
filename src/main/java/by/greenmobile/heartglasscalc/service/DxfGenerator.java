@@ -18,74 +18,10 @@ public class DxfGenerator {
             log.warn("generateDxf(): params = null");
             return "";
         }
-        if (params.isHoneycomb()) {
-            return generateHoneycombDxf(params);
-        } else {
-            return generateZigzagDxf(params);
-        }
+
+        return generateHoneycombDxf(params);
     }
 
-    // ========================================================================
-    // ЗИГЗАГ (как было)
-    // ========================================================================
-
-    private String generateZigzagDxf(GlassParameters params) {
-        StringWriter sw = new StringWriter();
-        PrintWriter out = new PrintWriter(sw);
-
-        double width = params.getWidth();
-        double height = params.getHeight();
-        double offset = params.getEdgeOffset();
-        double spacing = params.getLineSpacing();
-        int lineCount = params.getLineCount() != null ? params.getLineCount() : 0;
-        double busbarWidth = params.getBusbarWidth();
-        boolean verticalBusbars = params.isVerticalBusbars();
-
-        double safeTop = offset;
-        double safeBottom = height - offset;
-        double safeLeft = offset;
-        double safeRight = width - offset;
-
-        writeHeader(out);
-
-        addRectangle(out, 0, 0, width, height, "GLASS");
-
-        if (offset > 0 && width > 2 * offset && height > 2 * offset) {
-            addRectangle(out, offset, offset, width - 2 * offset, height - 2 * offset, "SAFE_ZONE");
-        }
-
-        if (verticalBusbars) {
-            addRectangle(out, safeLeft, safeTop, width - 2 * offset, busbarWidth, "BUSBAR");
-            addRectangle(out, safeLeft, safeBottom - busbarWidth, width - 2 * offset, busbarWidth, "BUSBAR");
-        } else {
-            addRectangle(out, safeLeft, safeTop, busbarWidth, safeBottom - safeTop, "BUSBAR");
-            addRectangle(out, safeRight - busbarWidth, safeTop, busbarWidth, safeBottom - safeTop, "BUSBAR");
-        }
-
-        if (lineCount > 0 && spacing > 0) {
-            if (verticalBusbars) {
-                double y1 = safeTop + busbarWidth;
-                double y2 = safeBottom - busbarWidth;
-                for (int i = 1; i <= lineCount; i++) {
-                    double x = offset + i * spacing;
-                    if (x < safeLeft || x > safeRight) continue;
-                    addLine(out, x, y1, x, y2, "ABLATION");
-                }
-            } else {
-                double x1 = safeLeft + busbarWidth;
-                double x2 = safeRight - busbarWidth;
-                for (int i = 1; i <= lineCount; i++) {
-                    double y = offset + i * spacing;
-                    if (y < safeTop || y > safeBottom) continue;
-                    addLine(out, x1, y, x2, y, "ABLATION");
-                }
-            }
-        }
-
-        writeFooter(out);
-        out.flush();
-        return sw.toString();
-    }
 
     // ========================================================================
     // СОТЫ (подрезка полигонов и закрытый контур)
@@ -198,25 +134,38 @@ public class DxfGenerator {
     // ========================================================================
 
     private void writeHeader(PrintWriter out) {
-        out.println("0"); out.println("SECTION");
-        out.println("2"); out.println("HEADER");
-        out.println("0"); out.println("ENDSEC");
-        out.println("0"); out.println("SECTION");
-        out.println("2"); out.println("ENTITIES");
+        out.println("0");
+        out.println("SECTION");
+        out.println("2");
+        out.println("HEADER");
+        out.println("0");
+        out.println("ENDSEC");
+        out.println("0");
+        out.println("SECTION");
+        out.println("2");
+        out.println("ENTITIES");
     }
 
     private void writeFooter(PrintWriter out) {
-        out.println("0"); out.println("ENDSEC");
-        out.println("0"); out.println("EOF");
+        out.println("0");
+        out.println("ENDSEC");
+        out.println("0");
+        out.println("EOF");
     }
 
     private void addLine(PrintWriter out, double x1, double y1, double x2, double y2, String layer) {
-        out.println("0"); out.println("LINE");
-        out.println("8"); out.println(layer);
-        out.println("10"); out.println(x1);
-        out.println("20"); out.println(y1);
-        out.println("11"); out.println(x2);
-        out.println("21"); out.println(y2);
+        out.println("0");
+        out.println("LINE");
+        out.println("8");
+        out.println(layer);
+        out.println("10");
+        out.println(x1);
+        out.println("20");
+        out.println(y1);
+        out.println("11");
+        out.println(x2);
+        out.println("21");
+        out.println(y2);
     }
 
     private void addRectangle(PrintWriter out, double x, double y, double w, double h, String layer) {
@@ -240,8 +189,10 @@ public class DxfGenerator {
         out.println(1);
 
         for (Point p : pts) {
-            out.println("10"); out.println(p.x);
-            out.println("20"); out.println(p.y);
+            out.println("10");
+            out.println(p.x);
+            out.println("20");
+            out.println(p.y);
         }
     }
 
@@ -282,8 +233,13 @@ public class DxfGenerator {
         return out;
     }
 
-    private interface InsideTest { boolean inside(Point p); }
-    private interface Intersector { Point intersect(Point a, Point b); }
+    private interface InsideTest {
+        boolean inside(Point p);
+    }
+
+    private interface Intersector {
+        Point intersect(Point a, Point b);
+    }
 
     private List<Point> clipAgainstEdge(List<Point> input, InsideTest inside, Intersector intersector) {
         List<Point> output = new ArrayList<>();
@@ -324,6 +280,10 @@ public class DxfGenerator {
     private static final class Point {
         final double x;
         final double y;
-        Point(double x, double y) { this.x = x; this.y = y; }
+
+        Point(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
     }
 }

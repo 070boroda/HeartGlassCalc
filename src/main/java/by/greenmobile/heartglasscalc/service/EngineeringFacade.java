@@ -11,13 +11,14 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class EngineeringFacade {
+    private static final double U = 220.0;
+
     private final ElectricalEngine electrical;
     private final HoneycombEstimator estimator;
 
     public GlassParameters calculateManual(GlassParameters p) {
         if (p == null) return null;
 
-        // honeycomb (manual calculates only honeycomb today)
         p.setPatternType(2);
 
         // Active geometry
@@ -44,6 +45,10 @@ public class EngineeringFacade {
         double rAch = rRaw * multFact;
         p.setAchievedResistance(rAch);
 
+        // Power (total + wm2)
+        double pTotal = (rAch > 0) ? (U * U / rAch) : 0.0;
+        p.setAchievedPowerWatts(pTotal);
+
         double pWm2 = electrical.computePowerWm2(rAch, areaM2);
         p.setAchievedPowerWm2(pWm2);
 
@@ -53,13 +58,31 @@ public class EngineeringFacade {
         }
         p.setPowerDeviationPercent(dev);
 
-        // Structured single-line log (easy to paste into spreadsheet)
+        // ===== Calibration mode (NEW) =====
+        // If user provides measured resistance, compute recommended multiplier.scale
+        if (p.getMeasuredResistance() != null && p.getMeasuredResistance() > 0 && rAch > 0) {
+            double rFact = p.getMeasuredResistance();
+            double scaleRec = rFact / rAch;
+            p.setRecommendedMultiplierScale(scaleRec);
+
+            double errPct = (rAch - rFact) / rFact * 100.0;
+            p.setCalibrationErrorPercent(errPct);
+
+            log.info("CALIBRATION: R_fact={} R_calc={} recommendedMultiplierScale={} errorPct={}",
+                    rFact, rAch, scaleRec, errPct);
+        } else {
+            p.setRecommendedMultiplierScale(null);
+            p.setCalibrationErrorPercent(null);
+        }
+
+        // Main structured log (easy to paste into spreadsheet)
         log.info(
                 "MANUAL(active): W={} H={} EO={} BBW={} CLR={} orient={} Rs={} targetWm2={} " +
-                        "L_eff={} W_eff={} areaM2={} R_target={} R_raw={} a={} gap={} mult={} R_ach={} P_achWm2={} devPct={}",
+                        "L_eff={} W_eff={} areaM2={} R_target={} R_raw={} a={} gap={} mult={} R_ach={} P_total={} P_achWm2={} devPct={} R_fact={} scaleRec={}",
                 p.getWidth(), p.getHeight(), p.getEdgeOffset(), p.getBusbarWidth(), p.getBusbarClearanceMm(),
                 p.getBusbarOrientation(), p.getSheetResistance(), p.getTargetPower(),
-                lEff, wEff, areaM2, rTarget, rRaw, a, gap, multFact, rAch, pWm2, dev
+                lEff, wEff, areaM2, rTarget, rRaw, a, gap, multFact, rAch, pTotal, pWm2, dev,
+                p.getMeasuredResistance(), p.getRecommendedMultiplierScale()
         );
 
         return p;

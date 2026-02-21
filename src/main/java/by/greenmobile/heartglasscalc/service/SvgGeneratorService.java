@@ -11,7 +11,7 @@ import java.util.List;
  * SVG-чертёж:
  * - рамка стекла, зона отступа, шины;
  * - либо зигзаг, либо решётка сот.
- *
+ * <p>
  * ВАЖНО (для сот):
  * - сетка строится "с запасом" и покрывает всю зону
  * - соты у границ/шин НЕ отбрасываются, а ПОДРЕЗАЮТСЯ клиппингом по прямоугольнику
@@ -26,99 +26,12 @@ public class SvgGeneratorService {
             log.warn("generateSvg(): params = null");
             return "";
         }
-        if (params.isHoneycomb()) {
-            return generateHoneycombSvg(params);
-        } else {
-            return generateZigzagSvg(params);
-        }
+        return generateHoneycombSvg(params);
     }
 
     // ========================================================================
     // ЗИГЗАГ (оставил как было)
     // ========================================================================
-
-    private String generateZigzagSvg(GlassParameters params) {
-        double width = params.getWidth();
-        double height = params.getHeight();
-        double offset = params.getEdgeOffset();
-        double spacing = params.getLineSpacing();
-        int lineCount = params.getLineCount() != null ? params.getLineCount() : 0;
-        double busbarWidth = params.getBusbarWidth();
-        boolean verticalBusbars = params.isVerticalBusbars();
-
-        double padding = 50.0;
-
-        StringBuilder svg = new StringBuilder();
-        svg.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" ")
-                .append("width=\"").append(width + 2 * padding).append("mm\" ")
-                .append("height=\"").append(height + 2 * padding).append("mm\" ")
-                .append("viewBox=\"")
-                .append(-padding).append(" ")
-                .append(-padding).append(" ")
-                .append(width + 2 * padding).append(" ")
-                .append(height + 2 * padding).append("\">\n");
-
-        svg.append("  <rect x=\"").append(-padding).append("\" y=\"").append(-padding)
-                .append("\" width=\"").append(width + 2 * padding)
-                .append("\" height=\"").append(height + 2 * padding)
-                .append("\" fill=\"#f0f4ff\" />\n");
-
-        svg.append("  <rect x=\"0\" y=\"0\" width=\"").append(width)
-                .append("\" height=\"").append(height)
-                .append("\" fill=\"#ffffff\" stroke=\"none\" />\n");
-
-        svg.append("  <defs>\n");
-        svg.append("    <filter id=\"glassShadow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\n");
-        svg.append("      <feDropShadow dx=\"4\" dy=\"4\" stdDeviation=\"4\" flood-color=\"#999\" flood-opacity=\"0.5\" />\n");
-        svg.append("    </filter>\n");
-        svg.append("  </defs>\n");
-
-        svg.append("  <rect x=\"0\" y=\"0\" width=\"").append(width)
-                .append("\" height=\"").append(height)
-                .append("\" fill=\"none\" stroke=\"#000000\" stroke-width=\"3\" filter=\"url(#glassShadow)\" />\n");
-
-        if (offset > 0 && width > 2 * offset && height > 2 * offset) {
-            svg.append("  <rect x=\"").append(offset)
-                    .append("\" y=\"").append(offset)
-                    .append("\" width=\"").append(width - 2 * offset)
-                    .append("\" height=\"").append(height - 2 * offset)
-                    .append("\" fill=\"none\" stroke=\"#ff0000\" stroke-width=\"2\" stroke-dasharray=\"10,6\" />\n");
-        }
-
-        if (verticalBusbars) {
-            drawHorizontalBusbars(svg, width, height, offset, busbarWidth);
-        } else {
-            drawVerticalBusbars(svg, width, height, offset, busbarWidth);
-        }
-
-        if (lineCount > 0 && spacing > 0) {
-            if (verticalBusbars) {
-                double safeTop = offset + busbarWidth;
-                double safeBottom = height - offset - busbarWidth;
-                for (int i = 1; i <= lineCount; i++) {
-                    double x = offset + i * spacing;
-                    if (x > width - offset) continue;
-                    svg.append("  <line x1=\"").append(x).append("\" y1=\"").append(safeTop)
-                            .append("\" x2=\"").append(x).append("\" y2=\"").append(safeBottom)
-                            .append("\" stroke=\"#0055ff\" stroke-width=\"2\" />\n");
-                }
-            } else {
-                double safeLeft = offset + busbarWidth;
-                double safeRight = width - offset - busbarWidth;
-                for (int i = 1; i <= lineCount; i++) {
-                    double y = offset + i * spacing;
-                    if (y > height - offset) continue;
-                    svg.append("  <line x1=\"").append(safeLeft).append("\" y1=\"").append(y)
-                            .append("\" x2=\"").append(safeRight).append("\" y2=\"").append(y)
-                            .append("\" stroke=\"#0055ff\" stroke-width=\"2\" />\n");
-                }
-            }
-        }
-
-        svg.append("</svg>");
-        return svg.toString();
-    }
 
     // ========================================================================
     // СОТЫ (подрезка по зоне между шинами + закрытые контуры)
@@ -417,8 +330,13 @@ public class SvgGeneratorService {
         return out;
     }
 
-    private interface InsideTest { boolean inside(Point p); }
-    private interface Intersector { Point intersect(Point a, Point b); }
+    private interface InsideTest {
+        boolean inside(Point p);
+    }
+
+    private interface Intersector {
+        Point intersect(Point a, Point b);
+    }
 
     private List<Point> clipAgainstEdge(List<Point> input, InsideTest inside, Intersector intersector) {
         List<Point> output = new ArrayList<>();
@@ -464,6 +382,10 @@ public class SvgGeneratorService {
     private static final class Point {
         final double x;
         final double y;
-        Point(double x, double y) { this.x = x; this.y = y; }
+
+        Point(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
     }
 }
