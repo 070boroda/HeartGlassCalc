@@ -17,20 +17,27 @@ public class EngineeringFacade {
     public GlassParameters calculateManual(GlassParameters p) {
         if (p == null) return null;
 
-        // honeycomb
+        // honeycomb (manual calculates only honeycomb today)
         p.setPatternType(2);
 
-        // ВАЖНО: расчёт по активной зоне (между шинами)
+        // Active geometry
+        double[] lw = electrical.effectiveLWmm(p);
+        double lEff = lw[0];
+        double wEff = lw[1];
         double areaM2 = electrical.computeActiveAreaM2(p);
+
+        // Targets / raw
         double rTarget = electrical.computeTargetResistance(p, true);
         p.setTotalResistance(rTarget);
 
         double rRaw = electrical.computeRawResistance(p);
         p.setRawResistance(rRaw);
 
+        // Pattern inputs
         double a = p.getHexSide() != null ? p.getHexSide() : 0.0;
         double gap = p.getHexGap() != null ? p.getHexGap() : 0.0;
 
+        // Multiplier & achieved
         double multFact = estimator.estimateMultiplier(p, a, gap);
         p.setPathLengthMultiplier(multFact);
 
@@ -46,8 +53,14 @@ public class EngineeringFacade {
         }
         p.setPowerDeviationPercent(dev);
 
-        log.info("MANUAL(active): areaM2={}, R_target={}, R_raw={}, mult={}, R_ach={}, P_ach={}, dev={}",
-                areaM2, rTarget, rRaw, multFact, rAch, pWm2, dev);
+        // Structured single-line log (easy to paste into spreadsheet)
+        log.info(
+                "MANUAL(active): W={} H={} EO={} BBW={} CLR={} orient={} Rs={} targetWm2={} " +
+                        "L_eff={} W_eff={} areaM2={} R_target={} R_raw={} a={} gap={} mult={} R_ach={} P_achWm2={} devPct={}",
+                p.getWidth(), p.getHeight(), p.getEdgeOffset(), p.getBusbarWidth(), p.getBusbarClearanceMm(),
+                p.getBusbarOrientation(), p.getSheetResistance(), p.getTargetPower(),
+                lEff, wEff, areaM2, rTarget, rRaw, a, gap, multFact, rAch, pWm2, dev
+        );
 
         return p;
     }

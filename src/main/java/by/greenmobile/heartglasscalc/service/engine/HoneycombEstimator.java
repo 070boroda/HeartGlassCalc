@@ -1,10 +1,12 @@
 package by.greenmobile.heartglasscalc.service.engine;
 
 import by.greenmobile.heartglasscalc.entity.GlassParameters;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class HoneycombEstimator {
 
     @Value("${honeycomb.model:PHYSICAL}")
@@ -24,19 +26,40 @@ public class HoneycombEstimator {
     @Value("${honeycomb.physical.minConductFraction:0.10}")
     private double minConductFraction;
 
-    // NEW: what is ablated?
-    // LINES  - ablated are lines/kerf with width=gap (old behavior)
-    // ISLANDS - ablated are hexagon islands; current flows in gaps between them (your case)
+    // PHYSICAL pattern:
+    // LINES   - ablated are lines/kerf with width=gap (old behavior)
+    // ISLANDS - ablated are hexagon islands; current flows in conducting gaps between them (your case)
     @Value("${honeycomb.physical.pattern:ISLANDS}")
     private String physicalPattern;
+
+    /**
+     * Optional global calibration scale for the final multiplier.
+     * Default 1.0 = no effect.
+     */
+    @Value("${honeycomb.multiplier.scale:1.0}")
+    private double multiplierScale;
 
     public double estimateMultiplier(GlassParameters p, double a, double gap) {
         if (a <= 0 || gap < 0) return 0;
 
+        double mult;
         if ("LEGACY".equalsIgnoreCase(model)) {
-            return estimateLegacy(p, a, gap);
+            mult = estimateLegacy(p, a, gap);
+        } else {
+            mult = estimatePhysical(a, gap);
         }
-        return estimatePhysical(a, gap);
+
+        // Apply optional calibration (default 1.0)
+        mult *= multiplierScale;
+
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "HONEYCOMB: model={} pattern={} a={} gap={} alpha={} tortCoeff={} minF={} legacyCoeff={} scale={} => mult={}",
+                    model, physicalPattern, a, gap, alpha, tortuosityCoeff, minConductFraction, legacyCoeff, multiplierScale, mult
+            );
+        }
+
+        return mult;
     }
 
     private double estimateLegacy(GlassParameters p, double a, double gap) {
@@ -111,8 +134,8 @@ public class HoneycombEstimator {
         if (f < minConductFraction) f = minConductFraction;
 
         // Tortuosity: narrower channels -> more tortuous current paths.
-        // NOTE: Here tortuosity should GROW when gap shrinks, so we use (a/gap), not (gap/a).
-        double tau = 1.0;
+        // Here tortuosity should GROW when gap shrinks => use (a/gap), not (gap/a).
+        double tau;
         if (gap > 0) {
             tau = 1.0 + tortuosityCoeff * (a / gap);
         } else {
@@ -120,7 +143,6 @@ public class HoneycombEstimator {
             tau = 1.0 + tortuosityCoeff * 1e6;
         }
 
-        // multiplier = tau / f^alpha
         return tau / Math.pow(f, alpha);
     }
 }

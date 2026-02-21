@@ -25,18 +25,18 @@ public class ProductionSearchService {
     @Value("${production.tolerancePercent:10}") private double tolerancePercent;
     @Value("${production.autoExpand:true}") private boolean autoExpand;
 
-    @Value("${production.base.aMin:10}") private double baseAMin;
+    @Value("${production.base.aMin:1}") private double baseAMin;
     @Value("${production.base.aMax:70}") private double baseAMax;
-    @Value("${production.base.aStep:1.0}") private double baseAStep;
+    @Value("${production.base.aStep:0.5}") private double baseAStep;
     @Value("${production.base.gapMin:0.5}") private double baseGapMin;
-    @Value("${production.base.gapMax:10}") private double baseGapMax;
+    @Value("${production.base.gapMax:20}") private double baseGapMax;
     @Value("${production.base.gapStep:0.5}") private double baseGapStep;
 
-    @Value("${production.ext.aMin:5}") private double extAMin;
+    @Value("${production.ext.aMin:1}") private double extAMin;
     @Value("${production.ext.aMax:80}") private double extAMax;
     @Value("${production.ext.aStep:0.5}") private double extAStep;
     @Value("${production.ext.gapMin:0.5}") private double extGapMin;
-    @Value("${production.ext.gapMax:12}") private double extGapMax;
+    @Value("${production.ext.gapMax:20}") private double extGapMax;
     @Value("${production.ext.gapStep:0.5}") private double extGapStep;
 
     public List<CandidateDesign> findTopDesigns(GlassParameters base) {
@@ -48,7 +48,7 @@ public class ProductionSearchService {
 
         if (!autoExpand) return toTop(baseFound, topN);
 
-        log.info("AUTO: nothing in base range, expanding...");
+        log.info("AUTO: nothing in base range, expanding ranges");
         List<ScoredCandidate> extFound = search(base, extAMin, extAMax, extAStep, extGapMin, extGapMax, extGapStep);
         List<ScoredCandidate> extAccepted = filterByTolerance(extFound, tolerancePercent);
         if (!extAccepted.isEmpty()) return toTop(extAccepted, topN);
@@ -60,14 +60,31 @@ public class ProductionSearchService {
                                          double aMin, double aMax, double aStep,
                                          double gMin, double gMax, double gStep) {
 
+        long t0 = System.nanoTime();
+
         // ВАЖНО: удельная мощность (Вт/м²) — по активной зоне между шинами
         double areaM2 = electrical.computeActiveAreaM2(base);
         double rawR = electrical.computeRawResistance(base);
 
+        long expected = estimateIterations(aMin, aMax, aStep) * estimateIterations(gMin, gMax, gStep);
+
+        log.info(
+                "AUTO start: W={} H={} EO={} BBW={} CLR={} orient={} Rs={} targetWm2={} areaM2={} R_raw={} " +
+                        "range a=[{}..{} step {}], gap=[{}..{} step {}], tolPct={}, topN={}, expectedIters={}",
+                base.getWidth(), base.getHeight(), base.getEdgeOffset(), base.getBusbarWidth(), base.getBusbarClearanceMm(),
+                base.getBusbarOrientation(), base.getSheetResistance(), base.getTargetPower(),
+                areaM2, rawR,
+                aMin, aMax, aStep, gMin, gMax, gStep,
+                tolerancePercent, topN, expected
+        );
+
         List<ScoredCandidate> out = new ArrayList<>();
+        long scanned = 0;
 
         for (double a = aMin; a <= aMax + 1e-9; a += aStep) {
             for (double gap = gMin; gap <= gMax + 1e-9; gap += gStep) {
+                scanned++;
+
                 double mult = estimator.estimateMultiplier(base, a, gap);
                 if (mult <= 0) continue;
 
@@ -101,7 +118,31 @@ public class ProductionSearchService {
                 .thenComparingDouble(s -> s.cellDensity)
         );
 
+        long dtMs = (System.nanoTime() - t0) / 1_000_000L;
+
+        int acceptedCount = (int) out.stream()
+                .filter(s -> Math.abs(s.design.getDeviationPercent()) <= tolerancePercent)
+                .count();
+
+        if (!out.isEmpty()) {
+            CandidateDesign best = out.get(0).design;
+            log.info(
+                    "AUTO done: scanned={} candidates={} accepted={} dtMs={} best(a={}, gap={}, mult={}, R={}, Pwm2={}, devPct={})",
+                    scanned, out.size(), acceptedCount, dtMs,
+                    best.getHexSide(), best.getHexGap(), best.getMultiplier(),
+                    best.getAchievedResistance(), best.getAchievedPowerWm2(), best.getDeviationPercent()
+            );
+        } else {
+            log.info("AUTO done: scanned={} candidates=0 accepted=0 dtMs={}", scanned, dtMs);
+        }
+
         return out;
+    }
+
+    private long estimateIterations(double min, double max, double step) {
+        if (step <= 0) return 0;
+        if (max < min) return 0;
+        return (long) Math.floor((max - min) / step) + 1;
     }
 
     private List<ScoredCandidate> filterByTolerance(List<ScoredCandidate> in, double tolPercent) {

@@ -7,6 +7,7 @@ import by.greenmobile.heartglasscalc.service.engine.ElectricalEngine;
 import by.greenmobile.heartglasscalc.service.production.ProductionSearchService;
 import by.greenmobile.heartglasscalc.service.production.RecommendationService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -16,6 +17,7 @@ import java.util.List;
 
 @Controller
 @RequiredArgsConstructor
+@Slf4j
 public class ProductionController {
 
     private final ProductionSearchService productionSearchService;
@@ -26,13 +28,15 @@ public class ProductionController {
     public String auto(@ModelAttribute GlassParameters params, Model model) {
         params.setPatternType(2);
 
+        log.info("HTTP /auto: W={} H={} Rs={} targetWm2={} EO={} BBW={} CLR={} orient={}",
+                params.getWidth(), params.getHeight(), params.getSheetResistance(), params.getTargetPower(),
+                params.getEdgeOffset(), params.getBusbarWidth(), params.getBusbarClearanceMm(), params.getBusbarOrientation()
+        );
+
         List<CandidateDesign> top = productionSearchService.findTopDesigns(params);
 
         double rawR = electricalEngine.computeRawResistance(params);
-
-        // ВАЖНО: целевое сопротивление считаем под targetPower (Вт/м²) по активной зоне
         double targetR = electricalEngine.computeTargetResistance(params, true);
-
         double requiredMult = (rawR > 0) ? (targetR / rawR) : 0;
 
         ProductionSearchService.MaxAchievable max = productionSearchService.estimateMaxAchievable(params);
@@ -50,6 +54,10 @@ public class ProductionController {
                 requiredMult,
                 max.maxMultiplier,
                 max.maxPowerWm2
+        );
+
+        log.info("AUTO summary: R_raw={} R_target={} requiredMult={} achievable={} topCount={} maxMult={} maxPowerWm2={}",
+                rawR, targetR, requiredMult, achievable, top.size(), max.maxMultiplier, max.maxPowerWm2
         );
 
         model.addAttribute("baseParams", params);
