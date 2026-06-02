@@ -1,6 +1,7 @@
 package by.greenmobile.heartglasscalc.service.engine;
 
 import by.greenmobile.heartglasscalc.entity.GlassParameters;
+import by.greenmobile.heartglasscalc.service.calibration.CalibrationStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -33,11 +34,14 @@ public class HoneycombEstimator {
     private String physicalPattern;
 
     /**
-     * Optional global calibration scale for the final multiplier.
-     * Default 1.0 = no effect.
+     * Калибровочный scale читается из {@link CalibrationStore} (рантайм-значение),
+     * а не из @Value напрямую. Это позволяет менять scale из UI без перезапуска.
      */
-    @Value("${honeycomb.multiplier.scale:1.0}")
-    private double multiplierScale;
+    private final CalibrationStore calibrationStore;
+
+    public HoneycombEstimator(CalibrationStore calibrationStore) {
+        this.calibrationStore = calibrationStore;
+    }
 
     public double estimateMultiplier(GlassParameters p, double a, double gap) {
         if (a <= 0 || gap < 0) return 0;
@@ -49,13 +53,13 @@ public class HoneycombEstimator {
             mult = estimatePhysical(a, gap);
         }
 
-        // Apply optional calibration (default 1.0)
-        mult *= multiplierScale;
+        double scale = calibrationStore.getCurrent();
+        mult *= scale;
 
         if (log.isDebugEnabled()) {
             log.debug(
                     "HONEYCOMB: model={} pattern={} a={} gap={} alpha={} tortCoeff={} minF={} legacyCoeff={} scale={} => mult={}",
-                    model, physicalPattern, a, gap, alpha, tortuosityCoeff, minConductFraction, legacyCoeff, multiplierScale, mult
+                    model, physicalPattern, a, gap, alpha, tortuosityCoeff, minConductFraction, legacyCoeff, scale, mult
             );
         }
 
@@ -86,63 +90,83 @@ public class HoneycombEstimator {
 
     private double estimatePhysical(double a, double gap) {
         if ("ISLANDS".equalsIgnoreCase(physicalPattern)) {
-            return estimatePhysicalIslands(a, gap);
+            return computeIslandsMultiplier(a, gap, alpha, tortuosityCoeff, minConductFraction);
         }
-        // default: old behavior (LINES)
-        return estimatePhysicalLines(a, gap);
+        return computeLinesMultiplier(a, gap, alpha, tortuosityCoeff, minConductFraction);
+    }
+
+    // ========================================================================
+    // Чистые формулы (package-private, без Spring — тестируются напрямую)
+    // ========================================================================
+
+    /**
+     * Геометрически точная доля ПРОВОДЯЩЕЙ площади для регулярной flat-top
+     * гексагональной решётки из изолирующих островков.
+     *
+     * <p>Площадь одного шестиугольника: S_hex = (3√3/2)·a².
+     * Площадь, приходящаяся на одну ячейку (hex + его доля канала):
+     * S_cell = (1.5·a + gap)·(√3·a + gap).
+     * Тогда f = 1 − S_hex / S_cell.
+     *
+     * <p>Граничные случаи: при a≤0 возвращает 0; при gap=0 даёт f=0 (каналы закрыты);
+     * при gap→∞ даёт f→1.
+     *
+     * @return f в диапазоне [0..1] БЕЗ клиппинга по minConductFraction
+     */
+    static double islandsConductingFraction(double a, double gap) {
+        if (a <= 0) return 0;
+        double sHex = (3.0 * Math.sqrt(3.0) / 2.0) * a * a;
+        double stepX = 1.5 * a + gap;
+        double stepY = Math.sqrt(3.0) * a + gap;
+        double sCell = stepX * stepY;
+        if (sCell <= 0) return 0;
+        double f = 1.0 - sHex / sCell;
+        if (f < 0) return 0;
+        if (f > 1) return 1;
+        return f;
     }
 
     /**
-     * Old model: ablated are lines of width=gap along honeycomb edges.
-     * (Works if current flows inside cells and laser creates insulating grooves.)
+     * Эмпирическая тортуозность канала: τ → ∞ при gap → 0.
+     * При gap=0 возвращает большое конечное значение (защита от деления на ноль).
      */
-    private double estimatePhysicalLines(double a, double gap) {
-        // rho_L = 2/(sqrt(3)*a)
-        double edgeLengthDensity = 2.0 / (Math.sqrt(3.0) * a);
+    static double islandsTortuosity(double a, double gap, double tortuosityCoeff) {
+        if (gap > 0) {
+            return 1.0 + tortuosityCoeff * (a / gap);
+        }
+        return 1.0 + tortuosityCoeff * 1e6;
+    }
 
-        // f_abl ≈ rho_L * gap
-        double ablatedFraction = edgeLengthDensity * gap;
-
-        // f = 1 - f_abl
-        double f = 1.0 - ablatedFraction;
+    /**
+     * Множитель сопротивления для паттерна ISLANDS:
+     * <pre>mult = τ(a, gap) / f(a, gap)^α</pre>
+     * с клиппингом f снизу до minConductFraction.
+     */
+    static double computeIslandsMultiplier(double a, double gap,
+                                           double alpha,
+                                           double tortuosityCoeff,
+                                           double minConductFraction) {
+        if (a <= 0 || gap < 0) return 0;
+        double f = islandsConductingFraction(a, gap);
         if (f < minConductFraction) f = minConductFraction;
-
-        // tau = 1 + c*(gap/a)
-        double tau = 1.0 + tortuosityCoeff * (gap / a);
-
-        // multiplier = tau / f^alpha
+        double tau = islandsTortuosity(a, gap, tortuosityCoeff);
         return tau / Math.pow(f, alpha);
     }
 
     /**
-     * New model (your case): ablated are hexagon islands; current flows in gaps between them.
-     * Here gap is the conducting channel width between neighboring islands.
-     *
-     * Conducting fraction f is approximated by area fraction of channels in a hex tiling.
-     * Let s = a + gap/sqrt(3). Then:
-     * f = 1 - (a/s)^2
-     *
-     * Multiplier increases when f decreases (channels get narrower).
+     * Старая модель LINES: абляция — изолирующие канавки шириной gap по рёбрам сот.
+     * Здесь gap трактуется как ширина пропила.
      */
-    private double estimatePhysicalIslands(double a, double gap) {
-        // Effective "cell" side that corresponds to hex island (side a) plus half-gap around it
-        double s = a + gap / Math.sqrt(3.0);
-        if (s <= 0) return 0;
-
-        // Conducting area fraction (channels)
-        double f = 1.0 - Math.pow(a / s, 2.0);
+    static double computeLinesMultiplier(double a, double gap,
+                                         double alpha,
+                                         double tortuosityCoeff,
+                                         double minConductFraction) {
+        if (a <= 0 || gap < 0) return 0;
+        double edgeLengthDensity = 2.0 / (Math.sqrt(3.0) * a);
+        double ablatedFraction = edgeLengthDensity * gap;
+        double f = 1.0 - ablatedFraction;
         if (f < minConductFraction) f = minConductFraction;
-
-        // Tortuosity: narrower channels -> more tortuous current paths.
-        // Here tortuosity should GROW when gap shrinks => use (a/gap), not (gap/a).
-        double tau;
-        if (gap > 0) {
-            tau = 1.0 + tortuosityCoeff * (a / gap);
-        } else {
-            // gap==0 => channels closed, clamp hard
-            tau = 1.0 + tortuosityCoeff * 1e6;
-        }
-
+        double tau = 1.0 + tortuosityCoeff * (gap / a);
         return tau / Math.pow(f, alpha);
     }
 }

@@ -33,6 +33,8 @@ repositories {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-json'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
     implementation 'org.apache.pdfbox:pdfbox:2.0.30'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'

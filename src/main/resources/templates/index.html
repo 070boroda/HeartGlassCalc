@@ -13,12 +13,84 @@
         }
 
         .container {
-            max-width: 980px;
+            max-width: 1400px;
             margin: auto;
             background: white;
             padding: 30px;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        /* Двухколоночный layout: форма слева, превью справа (sticky). */
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 24px;
+            align-items: start;
+        }
+        @media (max-width: 1100px) {
+            .layout { grid-template-columns: 1fr; }
+        }
+
+        .preview {
+            position: sticky;
+            top: 20px;
+            background: #fafbff;
+            border: 1px solid #e3e8f5;
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .preview h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        #preview-svg svg {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            background: #fff;
+            border-radius: 10px;
+        }
+        #preview-numbers {
+            margin-top: 14px;
+        }
+        #preview-numbers table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        #preview-numbers th {
+            text-align: left;
+            color: #555;
+            padding: 5px 8px;
+            font-weight: 600;
+            width: 45%;
+        }
+        #preview-numbers td {
+            color: #111;
+            padding: 5px 8px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        #preview-numbers tr:nth-child(odd) { background: #f0f3fb; }
+        #preview-numbers .dev-ok   td:last-child { color: #2e7d32; }
+        #preview-numbers .dev-warn td:last-child { color: #ef6c00; }
+        #preview-numbers .dev-bad  td:last-child { color: #c62828; }
+        .preview-error {
+            background: #fff3e0;
+            border-left: 4px solid #ff9800;
+            padding: 10px 12px;
+            border-radius: 8px;
+            color: #5d4037;
+            font-size: 13px;
+        }
+        .preview-status {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #888;
         }
 
         h1 { margin: 0 0 8px 0; color:#222; }
@@ -117,6 +189,9 @@
 <body>
 
 <div class="container">
+    <div style="float:right; margin-top:4px;">
+        <a href="/calibration" style="color:#667eea; text-decoration:none; font-weight:600;">Калибровка →</a>
+    </div>
     <h1>Калькулятор обогреваемого стекла</h1>
     <div class="sub">Инженерный инструмент: подбор рисунка абляции «соты» под заданную мощность.</div>
 
@@ -132,7 +207,8 @@
         </div>
     </div>
 
-    <form th:object="${params}" method="post">
+    <div class="layout">
+    <form th:object="${params}" id="paramsForm" method="post">
 
         <div class="section-title">Входные параметры</div>
 
@@ -229,7 +305,120 @@
         </div>
 
     </form>
+
+    <aside class="preview" aria-label="Превью расчёта">
+        <h3>Live-preview</h3>
+        <div id="preview-svg"></div>
+        <div id="preview-numbers">
+            <div class="preview-error">Введите параметры — превью обновится автоматически.</div>
+        </div>
+        <div class="preview-status" id="preview-status"></div>
+    </aside>
+    </div>
 </div>
+
+<script>
+(function () {
+    const form     = document.getElementById('paramsForm');
+    const svgBox   = document.getElementById('preview-svg');
+    const numBox   = document.getElementById('preview-numbers');
+    const statusEl = document.getElementById('preview-status');
+
+    const DEBOUNCE_MS = 200;
+    // Поля, которые точно должны быть числами (Integer на сервере).
+    const INTEGER_FIELDS = new Set(['busbarOrientation', 'patternType', 'hexCols', 'hexRows']);
+    let timer = null;
+    let inflight = null;
+    let seq = 0;
+
+    function formToJson() {
+        const data = {};
+        new FormData(form).forEach((value, key) => {
+            if (value === '' || value === null) return;
+            if (INTEGER_FIELDS.has(key)) {
+                const i = parseInt(value, 10);
+                if (!Number.isNaN(i)) data[key] = i;
+                return;
+            }
+            const n = parseFloat(value);
+            data[key] = Number.isNaN(n) ? value : n;
+        });
+        return data;
+    }
+
+    function fmt(v, digits) {
+        if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+        return v.toFixed(digits);
+    }
+
+    function devClass(dev) {
+        const a = Math.abs(dev);
+        if (a <= 5)  return 'dev-ok';
+        if (a <= 15) return 'dev-warn';
+        return 'dev-bad';
+    }
+
+    function renderNumbers(r) {
+        const devCls = devClass(r.deviationPercent || 0);
+        return `
+            <table>
+                <tr><th>R_raw</th><td>${fmt(r.rRaw, 2)} Ом</td></tr>
+                <tr><th>R_target</th><td>${fmt(r.rTarget, 2)} Ом</td></tr>
+                <tr><th>R_achieved</th><td>${fmt(r.rAchieved, 2)} Ом</td></tr>
+                <tr><th>Multiplier</th><td>${fmt(r.multiplier, 3)}</td></tr>
+                <tr><th>P_total</th><td>${fmt(r.pTotal, 0)} Вт</td></tr>
+                <tr><th>P_wm2</th><td>${fmt(r.pWm2, 0)} Вт/м²</td></tr>
+                <tr class="${devCls}"><th>Отклонение</th><td>${fmt(r.deviationPercent, 1)} %</td></tr>
+            </table>
+        `;
+    }
+
+    async function updatePreview() {
+        const mySeq = ++seq;
+        statusEl.textContent = 'обновление…';
+
+        if (inflight && inflight.abort) inflight.abort();
+        const ctrl = new AbortController();
+        inflight = ctrl;
+
+        try {
+            const res = await fetch('/preview/json', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formToJson()),
+                signal: ctrl.signal
+            });
+            if (mySeq !== seq) return; // устаревший ответ
+            const json = await res.json();
+            if (mySeq !== seq) return;
+
+            if (json.ok) {
+                svgBox.innerHTML = json.svg || '';
+                numBox.innerHTML = renderNumbers(json);
+                statusEl.textContent = 'обновлено ' + new Date().toLocaleTimeString();
+            } else {
+                svgBox.innerHTML = '';
+                numBox.innerHTML = `<div class="preview-error">${json.message || 'Введите параметры'}</div>`;
+                statusEl.textContent = '';
+            }
+        } catch (e) {
+            if (e.name === 'AbortError') return;
+            statusEl.textContent = 'ошибка: ' + e.message;
+        }
+    }
+
+    function schedule() {
+        clearTimeout(timer);
+        timer = setTimeout(updatePreview, DEBOUNCE_MS);
+    }
+
+    form.addEventListener('input', schedule);
+    form.addEventListener('change', schedule);
+
+    // первичная отрисовка при загрузке (дефолты из контроллера)
+    updatePreview();
+})();
+</script>
 
 </body>
 </html>

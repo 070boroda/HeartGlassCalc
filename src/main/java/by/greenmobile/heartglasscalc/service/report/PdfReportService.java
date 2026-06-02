@@ -1,6 +1,7 @@
 package by.greenmobile.heartglasscalc.service.report;
 
 import by.greenmobile.heartglasscalc.entity.GlassParameters;
+import by.greenmobile.heartglasscalc.service.calibration.CalibrationStore;
 import by.greenmobile.heartglasscalc.service.engine.ElectricalEngine;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -31,9 +32,11 @@ public class PdfReportService {
     private PDType0Font fontBold;
 
     private final ElectricalEngine electrical;
+    private final CalibrationStore calibrationStore;
 
-    public PdfReportService(ElectricalEngine electrical) {
+    public PdfReportService(ElectricalEngine electrical, CalibrationStore calibrationStore) {
         this.electrical = electrical;
+        this.calibrationStore = calibrationStore;
     }
 
     // ---- Honeycomb model parameters (printed in report) ----
@@ -54,9 +57,6 @@ public class PdfReportService {
 
     @Value("${honeycomb.legacyCoeff:0.35}")
     private double honeycombLegacyCoeff;
-
-    @Value("${honeycomb.multiplier.scale:1.0}")
-    private double honeycombScale;
 
     public byte[] buildEngineeringReport(GlassParameters p) throws IOException {
         try (PDDocument doc = new PDDocument()) {
@@ -172,7 +172,7 @@ public class PdfReportService {
         y = kv(c, y, "tortuosityCoeff", fmt(honeycombTortuosity));
         y = kv(c, y, "minConductFraction", fmt(honeycombMinConductFraction));
         y = kv(c, y, "legacyCoeff", fmt(honeycombLegacyCoeff));
-        y = kv(c, y, "multiplier.scale (текущее)", fmt(honeycombScale));
+        y = kv(c, y, "multiplier.scale (текущее)", fmt(calibrationStore.getCurrent()));
 
         c.y = y;
     }
